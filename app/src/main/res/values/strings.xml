@@ -1,0 +1,11 @@
+<resources>
+    <string name="app_name">ScoreReader</string>
+    <string name="action_open">Open MusicXML</string>
+    <string name="action_zoom_in">Zoom +</string>
+    <string name="action_zoom_out">Zoom −</string>
+    <string name="action_prev_page">Previous</string>
+    <string name="action_next_page">Next</string>
+    <string name="msg_loading">Loading…</string>
+    <string name="msg_pick_file">Please pick a MusicXML (.xml / .musicxml / .mxl) file</string>
+    <string name="err_load_failed">Failed to load score: %1$s</string>
+</resources>

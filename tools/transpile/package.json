@@ -1,0 +1,11 @@
+{
+  "private": true,
+  "name": "scorereader-transpile",
+  "version": "1.0.0",
+  "description": "One-shot Babel transpile of the OSMD bundle to ES5 for Android 6.0 WebView.",
+  "devDependencies": {
+    "@babel/core": "^7.24.0",
+    "@babel/cli": "^7.24.0",
+    "@babel/preset-env": "^7.24.0"
+  }
+}

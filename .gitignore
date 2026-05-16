@@ -1,0 +1,44 @@
+# Built application files
+*.apk
+*.aar
+*.ap_
+*.aab
+
+# Files for the ART/Dalvik VM
+*.dex
+
+# Java class files
+*.class
+
+# Generated files
+bin/
+gen/
+out/
+release/
+
+# Gradle
+.gradle/
+build/
+
+# Local configuration file
+local.properties
+
+# Proguard folder
+proguard/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.DS_Store
+
+# Captures
+captures/
+
+# Keystore (never commit signing keys)
+*.jks
+*.keystore
+
+# Babel transpile workspace
+tools/transpile/node_modules/
+tools/transpile/package-lock.json

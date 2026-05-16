@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=3.0, user-scalable=yes" />
+    <title>ScoreReader</title>
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            min-height: 100%;
+            background: #ffffff;
+            color: #222;
+            font-family: sans-serif;
+            -webkit-tap-highlight-color: transparent;
+        }
+        #placeholder {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 60vh;
+            color: #888;
+            font-size: 18px;
+            text-align: center;
+            padding: 24px;
+        }
+        #osmdContainer {
+            width: 100%;
+            box-sizing: border-box;
+            padding: 12px;
+        }
+        #errorBox {
+            display: none;
+            margin: 12px;
+            padding: 12px;
+            background: #ffe9e9;
+            border: 1px solid #f5b1b1;
+            color: #a40000;
+            font-family: monospace;
+            white-space: pre-wrap;
+            word-break: break-word;
+            border-radius: 4px;
+        }
+    </style>
+    <script>
+        // Capture *any* uncaught script error (including SyntaxError from old WebViews)
+        // before viewer.js executes.
+        window.__scoreReaderErrors = [];
+        window.addEventListener('error', function (e) {
+            var src = (e && e.filename) ? e.filename : '(unknown)';
+            var msg = (e && e.message) ? e.message : String(e);
+            var line = (e && e.lineno) ? e.lineno : '?';
+            var col  = (e && e.colno) ? e.colno : '?';
+            window.__scoreReaderErrors.push(src + ':' + line + ':' + col + ' ' + msg);
+            if (window.Android && window.Android.onError) {
+                try { window.Android.onError(src + ':' + line + ':' + col + ' ' + msg); } catch (_) {}
+            }
+        }, true);
+    </script>
+</head>
+<body>
+    <div id="placeholder">Use the &ldquo;Open MusicXML&rdquo; button to load a score.</div>
+    <div id="errorBox"></div>
+    <div id="osmdContainer"></div>
+
+    <!-- OSMD library, served from app assets via WebViewAssetLoader.
+         This bundle has been transpiled down to ES5 (Chromium 44 / Android 6.0). -->
+    <script src="opensheetmusicdisplay.min.js"
+            onerror="window.__osmdLoadFailed = true;"></script>
+    <script src="viewer.js"></script>
+</body>
+</html>

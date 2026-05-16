@@ -1,0 +1,6 @@
+<resources>
+    <color name="bg">#FFFFFFFF</color>
+    <color name="toolbar_bg">#FF222222</color>
+    <color name="toolbar_text">#FFFFFFFF</color>
+    <color name="accent">#FF4CAF50</color>
+</resources>
