@@ -14,6 +14,7 @@
             color: #222;
             font-family: sans-serif;
             -webkit-tap-highlight-color: transparent;
+            overflow-x: hidden;          /* never show a horizontal scrollbar */
         }
         #placeholder {
             display: flex;
@@ -29,6 +30,11 @@
             width: 100%;
             box-sizing: border-box;
             padding: 12px;
+            overflow-x: hidden;
+        }
+        #osmdContainer svg {
+            max-width: 100%;
+            height: auto;
         }
         #errorBox {
             display: none;

@@ -32,6 +32,14 @@
         }
     }
 
+    var now = (typeof performance !== 'undefined' && performance.now) ?
+        function () { return performance.now(); } :
+        function () { return Date.now(); };
+
+    var requestRaf = (typeof requestAnimationFrame === 'function') ?
+        function (cb) { return requestAnimationFrame(cb); } :
+        function (cb) { return setTimeout(cb, 16); };
+
     function diagnoseEnvironment() {
         var ua = (navigator && navigator.userAgent) ? navigator.userAgent : '(no UA)';
         var details = ['UA: ' + ua];
@@ -81,7 +89,7 @@
             return;
         }
 
-        var currentZoom = 1.0;
+        var currentZoom = 0.6;
         osmd.zoom = currentZoom;
 
         function decodeBase64Utf8(b64) {
@@ -103,16 +111,44 @@
         function loadXml(xmlString) {
             clearError();
             if (placeholder) placeholder.style.display = 'none';
+
+            var tParseStart = now();
+            if (window.Android && window.Android.onStage) {
+                try { window.Android.onStage('parsing'); } catch (_) {}
+            }
+
             osmd.load(xmlString).then(function () {
-                osmd.zoom = currentZoom;
-                osmd.render();
-                var title = '';
-                try {
-                    title = (osmd.Sheet && osmd.Sheet.TitleString) ? osmd.Sheet.TitleString : '';
-                } catch (_) {}
-                if (window.Android && window.Android.onRendered) {
-                    try { window.Android.onRendered(title); } catch (_) {}
+                var tParseEnd = now();
+                if (window.Android && window.Android.onStage) {
+                    try { window.Android.onStage('rendering'); } catch (_) {}
                 }
+                osmd.zoom = currentZoom;
+
+                // Give the WebView one frame to paint the "Rendering…" label
+                // before we block the main thread inside osmd.render().
+                requestRaf(function () {
+                    var tRenderStart = now();
+                    try {
+                        osmd.render();
+                    } catch (e) {
+                        showError('Failed to render score: ' + (e && e.message ? e.message : e));
+                        return;
+                    }
+                    var tRenderEnd = now();
+                    var title = '';
+                    try {
+                        title = (osmd.Sheet && osmd.Sheet.TitleString) ? osmd.Sheet.TitleString : '';
+                    } catch (_) {}
+
+                    var msg = 'timing/js  parse=' + Math.round(tParseEnd - tParseStart) +
+                              'ms  render=' + Math.round(tRenderEnd - tRenderStart) +
+                              'ms  xmlChars=' + xmlString.length;
+                    try { console.log('[ScoreReader] ' + msg); } catch (_) {}
+
+                    if (window.Android && window.Android.onRendered) {
+                        try { window.Android.onRendered(title); } catch (_) {}
+                    }
+                });
             }).catch(function (err) {
                 showError('Failed to load MusicXML: ' + (err && err.message ? err.message : err));
             });
@@ -121,11 +157,24 @@
         window.osmdViewer = {
             loadBase64: function (b64) {
                 try {
+                    var tDec = now();
                     var xml = decodeBase64Utf8(b64);
+                    try {
+                        console.log('[ScoreReader] timing/js  decode=' +
+                            Math.round(now() - tDec) +
+                            'ms  b64Len=' + b64.length + '  xmlChars=' + xml.length);
+                    } catch (_) {}
                     loadXml(xml);
                 } catch (e) {
                     showError('Could not decode score payload: ' + (e && e.message ? e.message : e));
                 }
+            },
+            setZoom: function (z) {
+                z = Number(z);
+                if (!isFinite(z) || z <= 0) return;
+                currentZoom = Math.max(0.25, Math.min(4.0, z));
+                osmd.zoom = currentZoom;
+                if (osmd.Sheet) osmd.render();
             },
             zoomBy: function (factor) {
                 if (!osmd.Sheet) return;
