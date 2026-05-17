@@ -181,7 +181,9 @@ class VerovioMainActivity : AppCompatActivity() {
         }
         // Re-apply page options on every open so scale changes made in
         // Settings (or display rotations) take effect on the next score.
-        VerovioNative.nativeSetOptions(toolkit, buildPageOptions())
+        val opts = buildPageOptions()
+        Log.i(TAG, "verovio options: $opts")
+        VerovioNative.nativeSetOptions(toolkit, opts)
         lastAppliedScale = settings.verovioScale
         if (jobToken != renderJobToken) return null
 
@@ -221,25 +223,36 @@ class VerovioMainActivity : AppCompatActivity() {
             bytes[2] == 0x03.toByte() && bytes[3] == 0x04.toByte()
 
     /**
-     * Build Verovio options so each rendered page exactly fills the display.
+     * Build Verovio options so each rendered page exactly fills the display
+     * and the Settings slider actually changes how big notes look on screen.
      *
-     * Verovio paginates based on `pageWidth` x `pageHeight` (units of 1/100 mm
-     * when `unit` is default). We pin both to the screen aspect ratio and
-     * disable `adjustPageHeight` so every page has identical height. That way
-     * one Verovio page == one full TV screen, which is what makes the
-     * left/right DPAD feel like real page turning (no scrolling needed).
+     * Verovio's `scale` option controls *staff size* relative to a fixed
+     * `pageWidth`/`pageHeight` (units of 1/100 mm). On its own it just
+     * changes how many measures fit on a page, not how large each note
+     * appears, because we always rasterise the SVG to fill the screen.
+     *
+     * Instead we keep Verovio's internal `scale` pinned at 100 and treat
+     * the user's slider as a *zoom factor* that scales `pageWidth` /
+     * `pageHeight` inversely: a smaller logical page means fewer measures
+     * per page, which after fit-to-screen makes every note appear larger.
+     *
+     * With `svgViewBox: true`, Verovio also emits a `viewBox` attribute so
+     * AndroidSVG honours `documentWidth/Height` and properly scales the
+     * page-shaped SVG to the screen.
      */
     private fun buildPageOptions(): String {
         val dm = resources.displayMetrics
         val w = (dm.widthPixels.takeIf { it > 0 } ?: 1920)
         val h = (dm.heightPixels.takeIf { it > 0 } ?: 1080)
-        // Use a generous logical page width so a comfortable number of staves
-        // and notes fit per line. The exact value is arbitrary; only the
-        // ratio between width/height matters for layout, and `scale` sets
-        // staff size relative to the page.
-        val pageWidth = 2400
+        // Reference page width that yields a comfortable density at zoom=1.0
+        // (i.e. when the slider sits at its "native" value).
+        val baseWidth = 2400
+        val sliderScale = settings.verovioScale
+            .coerceIn(AppSettings.VEROVIO_SCALE_MIN, AppSettings.VEROVIO_SCALE_MAX)
+        val nativeScale = AppSettings.DEFAULT_VEROVIO_SCALE.toFloat()
+        val zoom = (sliderScale.toFloat() / nativeScale).coerceIn(0.25f, 4f)
+        val pageWidth = (baseWidth / zoom).toInt().coerceAtLeast(400)
         val pageHeight = ((pageWidth.toLong() * h) / w).toInt().coerceAtLeast(400)
-        val scale = settings.verovioScale
         return """
             {
               "pageWidth": $pageWidth,
@@ -248,9 +261,10 @@ class VerovioMainActivity : AppCompatActivity() {
               "pageMarginRight": 50,
               "pageMarginTop": 50,
               "pageMarginBottom": 50,
-              "scale": $scale,
+              "scale": 100,
               "adjustPageHeight": false,
-              "breaks": "auto"
+              "breaks": "auto",
+              "svgViewBox": true
             }
         """.trimIndent()
     }

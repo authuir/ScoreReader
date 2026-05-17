@@ -56,6 +56,10 @@ class RecentsRepository(context: Context) {
         val current = list().toMutableList()
         // Dedupe by URI string (different schemes are intentionally distinct)
         val uriStr = uri.toString()
+        // Capture the existing favorite flag BEFORE removing the old entry,
+        // otherwise re-opening a favorited score (which calls add()) silently
+        // clears its favorite state.
+        val previousFavorite = current.firstOrNull { it.uri.toString() == uriStr }?.isFavorite ?: false
         current.removeAll { it.uri.toString() == uriStr }
         current.add(
             0,
@@ -64,7 +68,7 @@ class RecentsRepository(context: Context) {
                 displayName = (displayName ?: uri.lastPathSegment ?: uriStr).take(160),
                 openedAtMs = now,
                 persistable = persistable,
-                isFavorite = current.firstOrNull { it.uri.toString() == uriStr }?.isFavorite ?: false
+                isFavorite = previousFavorite
             )
         )
         val trimmed = current.take(MAX_ENTRIES)

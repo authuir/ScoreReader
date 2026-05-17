@@ -150,13 +150,39 @@ class OnlineLibraryRepository(context: Context) {
     private fun resolveDownloadUrl(library: OnlineLibrary, item: OnlineItem): String {
         // Always download from the manifest's own host. `item.sourceUrl`
         // often points at GitHub raw (HTTPS) and Android TVs may not have
-        // the right cert chain — staying on the LAN server is reliable
+        // the right cert chain — staying on the manifest host is reliable
         // and matches what the user signed up for.
-        val path = if (item.path.startsWith("/")) item.path else "/${item.path}"
-        return library.baseUrl.trimEnd('/') + path
+        //
+        // We support two conventions for `item.path`:
+        //  - Absolute ("/scores/foo.mxl") — resolves against the manifest
+        //    host:port only. Used by the LAN dev server where library.json
+        //    sits at the URL root.
+        //  - Relative ("scores/foo.mxl") — resolves against the manifest's
+        //    *directory*. Required for GitHub Pages project sites where
+        //    library.json lives under a sub-path (e.g. `/<repo>/`).
+        return if (item.path.startsWith("/")) {
+            hostOnlyBaseOf(library.manifestUrl).trimEnd('/') + item.path
+        } else {
+            library.baseUrl.trimEnd('/') + "/" + item.path.trimStart('/')
+        }
     }
 
     private fun baseUrlOf(manifestUrl: String): String {
+        // Directory containing the manifest, e.g.
+        //   https://user.github.io/repo/library.json  ->  https://user.github.io/repo
+        //   http://192.168.0.5:8081/library.json      ->  http://192.168.0.5:8081
+        val uri = URI(manifestUrl)
+        val scheme = uri.scheme ?: "http"
+        val host = uri.host ?: return manifestUrl
+        val portPart = if (uri.port > 0) ":${uri.port}" else ""
+        val rawPath = uri.rawPath ?: ""
+        val dir = rawPath.substringBeforeLast('/', missingDelimiterValue = "")
+        return "$scheme://$host$portPart$dir"
+    }
+
+    private fun hostOnlyBaseOf(manifestUrl: String): String {
+        // Scheme + host + port, no path. Used to resolve `/scores/...` style
+        // absolute paths against the manifest's origin.
         val uri = URI(manifestUrl)
         val scheme = uri.scheme ?: "http"
         val host = uri.host ?: return manifestUrl

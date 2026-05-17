@@ -54,6 +54,11 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
+            // Sign release builds with the debug key so the APK produced by
+            // CI is directly installable on Android TV / STB devices for
+            // side-loading. Replace with a real signingConfig when shipping
+            // to a store.
+            signingConfig = signingConfigs.getByName("debug")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

@@ -1,0 +1,3 @@
+# Drop your *.mxl, *.musicxml or *.xml files into this directory and push to
+# `main`. The `online-library-pages` GitHub Actions workflow will regenerate
+# library.json + index.html and publish them to GitHub Pages automatically.
