@@ -1,8 +1,14 @@
 # ScoreReader
 
 An Android MusicXML sheet-music reader designed for **Android 6.0 (API 23)** set-top boxes.
-Rendering is performed by [OpenSheetMusicDisplay](https://github.com/opensheetmusicdisplay/opensheetmusicdisplay)
-running inside a `WebView`, while file I/O and UI live in native Kotlin code.
+Two rendering engines ship in the same APK and can be toggled at runtime from
+the home screen:
+
+- **WebView + OSMD** (default) — [OpenSheetMusicDisplay](https://github.com/opensheetmusicdisplay/opensheetmusicdisplay)
+  running inside Android's stock `WebView`.
+- **Verovio (JNI)** — the [Verovio](https://www.verovio.org/) C++ engraver
+  compiled into `libscorereader-verovio.so`, with SVG output rasterised by
+  AndroidSVG and drawn straight onto an `ImageView`.
 
 ## Features
 
@@ -23,19 +29,28 @@ ScoreReader/
 ├── gradle.properties
 ├── gradle/wrapper/gradle-wrapper.properties
 ├── scripts/fetch-osmd.ps1       // re-downloads the OSMD bundle
+├── vendor/
+│   ├── verovio-6.1.0.zip        // upstream Verovio sources (checked in)
+│   └── verovio-version-6.1.0/   // extracted by `Expand-Archive`, git-ignored
 └── app/
     ├── build.gradle.kts
     ├── proguard-rules.pro
     └── src/main/
         ├── AndroidManifest.xml
+        ├── cpp/                              // Verovio JNI engine
+        │   ├── CMakeLists.txt
+        │   └── verovio-jni.cpp
         ├── java/com/example/scorereader/
-        │   ├── MainActivity.kt
+        │   ├── HomeActivity.kt
+        │   ├── MainActivity.kt               // WebView + OSMD viewer
+        │   ├── VerovioMainActivity.kt        // Native (JNI) viewer
+        │   ├── VerovioNative.kt              // JNI bindings
+        │   ├── VerovioResourceExtractor.kt   // unpacks verovio-data.zip
         │   └── JsBridge.kt
-        ├── assets/osmd/
-        │   ├── index.html
-        │   ├── viewer.js
-        │   └── opensheetmusicdisplay.min.js   // fetched on setup
-        └── res/                              // layouts, themes, strings, icon
+        ├── assets/
+        │   ├── osmd/                          // ES5 OSMD bundle
+        │   └── verovio-data.zip               // Bravura SVG glyphs + fonts
+        └── res/                               // layouts, themes, strings, icon
 ```
 
 ## Building
@@ -45,9 +60,33 @@ ScoreReader/
 - Android Studio Hedgehog (or newer) / command-line Android SDK
 - JDK 17 (bundled with Android Studio)
 - Android SDK Platform 34, Build-Tools 34.x
-- Android emulator or device with API 23+
+- **Android NDK `27.1.12297006`** and **CMake `3.22.1`** — required for the
+  Verovio native engine. Install via Android Studio's SDK Manager
+  (SDK Tools → "Show Package Details" → tick the matching NDK / CMake
+  versions). The Gradle script pins these exact versions; using a newer
+  NDK works but will trigger an automatic re-download on first build.
+- Android emulator or device with API 23+ (set-top boxes are typically
+  `armeabi-v7a`; the fat APK also ships `arm64-v8a`)
 
-### 2. Generate the Gradle wrapper (one-time)
+### 2. Extract the vendored Verovio source
+
+The Verovio source tarball is checked into `vendor/verovio-6.1.0.zip`
+(~28 MB). It must be expanded **once** before the first native build —
+the extracted tree (`vendor/verovio-version-6.1.0/`) is git-ignored:
+
+```powershell
+# From the repo root
+Expand-Archive -Path vendor\verovio-6.1.0.zip -DestinationPath vendor -Force
+```
+
+The CMake build at `app/src/main/cpp/CMakeLists.txt` reads sources from
+`vendor/verovio-version-6.1.0/{src,include,libmei,tools}` and synthesises
+the `git_commit.h` stub that upstream normally generates from a bash
+script. The pre-built glyph/font data ships as
+`app/src/main/assets/verovio-data.zip` (1.6 MB) and is checked in directly
+— there is no separate step to regenerate it.
+
+### 3. Generate the Gradle wrapper (one-time)
 
 If `gradlew` / `gradlew.bat` / `gradle-wrapper.jar` are missing (they are *not*
 checked in by default for size reasons), generate them once:
@@ -62,15 +101,53 @@ After that you can use `./gradlew` (Linux/macOS) or `.\gradlew.bat` (Windows).
 Android Studio creates these files automatically the first time you open the
 project, so this step is optional if you use the IDE.
 
-### 3. Build & install
+### 4. Build & install
+
+Full clean-room flow on Windows / PowerShell:
 
 ```powershell
-.\gradlew.bat installDebug
+# 0. one-time prerequisites
+#    - Android SDK Platform 34, Build-Tools 34.x, NDK 27.1.12297006, CMake 3.22.1
+#    - JDK 17 (Android Studio bundles one at:
+#        "C:\Program Files (x86)\Android\openjdk\jdk-17.0.14")
+
+# 1. unzip the vendored Verovio source
+Expand-Archive -Path vendor\verovio-6.1.0.zip -DestinationPath vendor -Force
+
+# 2. (first checkout only) make sure the Gradle wrapper exists
+# gradle wrapper --gradle-version 8.4
+
+# 3. point Gradle at JDK 17 and build the debug APK
+$env:JAVA_HOME = "C:\Program Files (x86)\Android\openjdk\jdk-17.0.14"
+.\gradlew.bat :app:assembleDebug --no-daemon
+
+# 4. install to a connected device / set-top box
+.\gradlew.bat :app:installDebug
 ```
 
-or simply press **Run** in Android Studio.
+The first build compiles ~285 Verovio C++ files for **both** `arm64-v8a` and
+`armeabi-v7a`, which takes around 8–10 minutes on a modern laptop. Subsequent
+incremental builds finish in under a minute. Output APK:
+`app/build/outputs/apk/debug/app-debug.apk` (~36 MB fat APK).
 
-### 4. Refreshing the OSMD library
+> **Tip:** if the very first native build fails on a random `.cpp` file with
+> no obvious error text (e.g. a transient ninja FAILED line on
+> `oriscus.cpp`), wipe the per-ABI CMake state and try again — it has been
+> observed when antivirus software locks freshly emitted `.o` files:
+>
+> ```powershell
+> Remove-Item app\.cxx -Recurse -Force -ErrorAction SilentlyContinue
+> .\gradlew.bat :app:assembleDebug --no-daemon
+> ```
+
+### 5. Switching engines at runtime
+
+On the home screen the **Engine: WebView / Engine: Verovio (JNI)** button
+cycles between the two viewers. The choice is persisted in
+`SharedPreferences("score_reader_engine")` and applied to every score
+opened from then on. The WebView engine is the default.
+
+### 6. Refreshing the OSMD library
 
 The OSMD bundle that ships under `app/src/main/assets/osmd/` has been
 **transpiled down to ES5** so it can parse on Android 6.0's stock WebView
@@ -131,4 +208,5 @@ registers an `ACTION_VIEW` intent filter for XML MIME types.
 
 This scaffolding is provided as-is for application development.
 OpenSheetMusicDisplay is licensed under the BSD-3-Clause license — see its
-upstream repository for details.
+upstream repository for details. Verovio is licensed under LGPL-3.0; see
+`vendor/verovio-6.1.0.zip` → `COPYING.LESSER` for the full text.

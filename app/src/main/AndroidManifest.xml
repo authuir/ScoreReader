@@ -62,5 +62,14 @@
                 <data android:mimeType="text/xml" />
             </intent-filter>
         </activity>
+
+        <!-- Experimental native viewer powered by Verovio (JNI). Launched only
+             from HomeActivity when the engine toggle is set to Verovio. -->
+        <activity
+            android:name=".VerovioMainActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|keyboardHidden|uiMode"
+            android:launchMode="singleTop"
+            android:parentActivityName=".HomeActivity" />
     </application>
 </manifest>

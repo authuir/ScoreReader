@@ -18,4 +18,8 @@
     <string name="msg_no_files_found">No MusicXML (.xml / .musicxml / .mxl) files found under storage roots.</string>
     <string name="msg_recent_unreachable">That score is no longer reachable. Removed from history.</string>
     <string name="err_load_failed">Failed to load score: %1$s</string>
+
+    <!-- Engine toggle (HomeActivity) -->
+    <string name="engine_webview">Engine: WebView</string>
+    <string name="engine_verovio">Engine: Verovio (JNI)</string>
 </resources>

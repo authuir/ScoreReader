@@ -42,3 +42,16 @@ captures/
 # Babel transpile workspace
 tools/transpile/node_modules/
 tools/transpile/package-lock.json
+
+# Vendored third-party sources: we check in the source zip under `vendor/`,
+# but the extracted tree is treated as a build artifact (recreated by the
+# unzip step in the README). Keep the zip, ignore the extracted folder.
+vendor/verovio-version-6.1.0/
+
+# Native C++ build cache produced by AGP's externalNativeBuild (per-ABI
+# .o files, ninja files, generated headers). Regenerated on every build.
+.cxx/
+app/.cxx/
+
+# Local build logs (Tee-Object output from gradlew runs).
+build-*.log

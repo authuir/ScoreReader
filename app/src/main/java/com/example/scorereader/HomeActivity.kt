@@ -70,6 +70,8 @@ class HomeActivity : AppCompatActivity() {
         binding.btnScan.setOnClickListener {
             ensureStoragePermissionThen { showBuiltinFileBrowser() }
         }
+        binding.btnEngine.setOnClickListener { toggleEngine() }
+        refreshEngineLabel()
     }
 
     override fun onResume() {
@@ -99,13 +101,45 @@ class HomeActivity : AppCompatActivity() {
     }
 
     private fun startViewer(uri: Uri, displayName: String?) {
-        val intent = Intent(this, MainActivity::class.java).apply {
+        val targetClass = if (preferVerovio()) {
+            VerovioMainActivity::class.java
+        } else {
+            MainActivity::class.java
+        }
+        val intent = Intent(this, targetClass).apply {
             action = Intent.ACTION_VIEW
             data = uri
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             if (displayName != null) putExtra(MainActivity.EXTRA_DISPLAY_NAME, displayName)
         }
         startActivity(intent)
+    }
+
+    // ---------------------------------------------------------------------
+    // Engine toggle (WebView vs Verovio)
+    // ---------------------------------------------------------------------
+
+    private fun engineSharedPrefs() =
+        getSharedPreferences("score_reader_engine", Context.MODE_PRIVATE)
+
+    private fun preferVerovio(): Boolean =
+        engineSharedPrefs().getString("engine", "webview") == "verovio"
+
+    private fun toggleEngine() {
+        val now = if (preferVerovio()) "webview" else "verovio"
+        engineSharedPrefs().edit().putString("engine", now).apply()
+        refreshEngineLabel()
+        Toast.makeText(
+            this,
+            getString(if (now == "verovio") R.string.engine_verovio else R.string.engine_webview),
+            Toast.LENGTH_SHORT
+        ).show()
+    }
+
+    private fun refreshEngineLabel() {
+        binding.btnEngine.setText(
+            if (preferVerovio()) R.string.engine_verovio else R.string.engine_webview
+        )
     }
 
     // ---------------------------------------------------------------------

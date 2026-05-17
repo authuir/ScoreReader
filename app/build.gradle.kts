@@ -7,6 +7,10 @@ android {
     namespace = "com.example.scorereader"
     compileSdk = 34
 
+    // Pin to the NDK we already have installed locally; AGP's default of
+    // 25.1.8937393 would trigger a ~1GB download.
+    ndkVersion = "27.1.12297006"
+
     defaultConfig {
         applicationId = "com.example.scorereader"
         // Android 6.0 set-top box target
@@ -14,6 +18,37 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "1.0.0"
+
+        // Most Android 6.x set-top boxes are 32-bit ARM, so ship both ABIs.
+        // arm64-v8a covers newer boxes; armeabi-v7a covers the legacy ones
+        // (and is what was needed to make the APK install on the target STB).
+        ndk {
+            abiFilters += setOf("arm64-v8a", "armeabi-v7a")
+        }
+
+        externalNativeBuild {
+            cmake {
+                arguments += listOf(
+                    "-DANDROID_STL=c++_shared",
+                    "-DCMAKE_BUILD_TYPE=Release"
+                )
+                cppFlags += "-std=c++20"
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
+
+    // Keep the bundled Verovio resources uncompressed so the runtime
+    // extractor can stream them straight out of the APK without a double
+    // inflate pass.
+    androidResources {
+        noCompress.add("zip")
     }
 
     buildTypes {
@@ -56,4 +91,7 @@ dependencies {
     implementation("androidx.activity:activity-ktx:1.7.2")
     implementation("androidx.documentfile:documentfile:1.0.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+
+    // SVG -> Android Canvas/Bitmap renderer used by the Verovio (JNI) viewer.
+    implementation("com.caverock:androidsvg-aar:1.4")
 }

@@ -25,12 +25,23 @@
             android:textStyle="bold" />
 
         <Button
+            android:id="@+id/btnEngine"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="12dp"
+            android:text="@string/engine_webview"
+            android:focusable="true"
+            android:nextFocusRight="@+id/btnOpen"
+            android:nextFocusDown="@+id/recyclerRecents" />
+
+        <Button
             android:id="@+id/btnOpen"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginStart="12dp"
             android:text="@string/action_open"
             android:focusable="true"
+            android:nextFocusLeft="@id/btnEngine"
             android:nextFocusRight="@+id/btnScan"
             android:nextFocusDown="@+id/recyclerRecents" />
 
