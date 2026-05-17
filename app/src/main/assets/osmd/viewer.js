@@ -169,6 +169,13 @@
                     showError('Could not decode score payload: ' + (e && e.message ? e.message : e));
                 }
             },
+            clear: function () {
+                lastXml = null;
+                try {
+                    while (container.firstChild) container.removeChild(container.firstChild);
+                } catch (_) {}
+                if (placeholder) placeholder.style.display = '';
+            },
             setZoom: function (z) {
                 z = Number(z);
                 if (!isFinite(z) || z <= 0) return;
