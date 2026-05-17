@@ -21,6 +21,12 @@
     <string name="msg_unfavorited">Removed from favorites</string>
     <string name="err_load_failed">Failed to load score: %1$s</string>
 
+    <!-- Verovio per-page MIDI playback -->
+    <string name="msg_playing_page">▶ Playing this page</string>
+    <string name="msg_play_unavailable">Playback not available for this score</string>
+    <string name="msg_play_midi_loading">Preparing MIDI… try again in a moment</string>
+    <string name="msg_play_no_page_time">Cannot resolve start time for this page</string>
+
     <!-- Engine toggle (HomeActivity) -->
     <string name="engine_webview">Engine: WebView</string>
     <string name="engine_verovio">Engine: Verovio (JNI)</string>

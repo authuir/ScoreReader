@@ -58,6 +58,16 @@ class VerovioMainActivity : AppCompatActivity() {
      *  detect Settings changes and trigger a fresh render. */
     private var lastAppliedScale: Int = -1
 
+    /** MIDI-backed page-at-a-time playback (DPAD center / ENTER). */
+    private val pagePlayer = PagePlayer()
+    private var midiFile: File? = null
+    /** First measure xml:id we found on each rendered page. Populated lazily
+     *  as pages are rasterised so playback bounds can be resolved without
+     *  pre-rendering the whole score. */
+    private val firstMeasureIdByPage = HashMap<Int, String>()
+    /** True once the toolkit has produced a MIDI file for the current score. */
+    private var midiReady: Boolean = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityVerovioBinding.inflate(layoutInflater)
@@ -68,6 +78,15 @@ class VerovioMainActivity : AppCompatActivity() {
         settings = AppSettings(this)
         applyFullscreenFlags()
         registerSvgFontResolver(assets)
+
+        pagePlayer.onStateChange = { playing ->
+            runOnUiThread {
+                binding.playbackIndicator.visibility = if (playing) View.VISIBLE else View.GONE
+            }
+        }
+        pagePlayer.onError = { msg ->
+            runOnUiThread { diagToast("MP: $msg") }
+        }
 
         handleIntent(intent)
     }
@@ -90,7 +109,13 @@ class VerovioMainActivity : AppCompatActivity() {
         }
     }
 
+    override fun onPause() {
+        pagePlayer.pauseIfPlaying()
+        super.onPause()
+    }
+
     override fun onDestroy() {
+        pagePlayer.release()
         destroyToolkit()
         for (b in pageBitmaps.values) b.recycle()
         pageBitmaps.clear()
@@ -131,6 +156,12 @@ class VerovioMainActivity : AppCompatActivity() {
         for (b in pageBitmaps.values) b.recycle()
         pageBitmaps.clear()
         binding.scoreImage.setImageBitmap(null)
+        // Reset playback state — the new score has its own MIDI / page map.
+        pagePlayer.release()
+        pagePlayer.clearPageBounds()
+        firstMeasureIdByPage.clear()
+        midiFile = null
+        midiReady = false
 
         lifecycleScope.launch {
             try {
@@ -151,6 +182,9 @@ class VerovioMainActivity : AppCompatActivity() {
                 setLoadingText(getString(R.string.msg_loading_rendering))
                 renderAndShow(jobToken, currentPage)
                 recents.add(uri, currentDisplayName, persistable = uri.scheme == "content")
+                // Render MIDI in the background; play/pause becomes usable
+                // once this finishes.
+                renderMidiAsync(jobToken)
             } catch (t: Throwable) {
                 Log.e(TAG, "Failed to open in Verovio", t)
                 hideLoading()
@@ -313,6 +347,14 @@ class VerovioMainActivity : AppCompatActivity() {
         val svgText = VerovioNative.nativeRenderToSvg(handle, pageNo)
         val svgMs = System.currentTimeMillis() - tSvg0
 
+        // Remember the first measure on this page so PagePlayer can resolve
+        // a MIDI onset for it later. The lookup itself happens lazily, so
+        // this is cheap (a single regex scan over the SVG string).
+        extractFirstMeasureId(svgText)?.let { id ->
+            firstMeasureIdByPage[pageNo] = id
+            resolvePageStartIfReady(pageNo, id)
+        }
+
         val tParse0 = System.currentTimeMillis()
         val svg = SVG.getFromString(svgText)
         val parseMs = System.currentTimeMillis() - tParse0
@@ -370,6 +412,12 @@ class VerovioMainActivity : AppCompatActivity() {
     // ---------------------------------------------------------------------
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+            // Transient on-screen diagnostic: show every keycode we see so a
+            // user without logcat can identify what their remote's centre
+            // button actually sends.
+            diagToast("key=${event.keyCode} name=${KeyEvent.keyCodeToString(event.keyCode)}")
+        }
         if (event.action == KeyEvent.ACTION_DOWN) {
             when (event.keyCode) {
                 KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_PAGE_UP -> {
@@ -378,21 +426,188 @@ class VerovioMainActivity : AppCompatActivity() {
                 KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_PAGE_DOWN -> {
                     pageBy(1); return true
                 }
+                KeyEvent.KEYCODE_DPAD_CENTER,
+                KeyEvent.KEYCODE_ENTER,
+                KeyEvent.KEYCODE_NUMPAD_ENTER,
+                KeyEvent.KEYCODE_SPACE,
+                KeyEvent.KEYCODE_BUTTON_A,
+                KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+                KeyEvent.KEYCODE_MEDIA_PLAY,
+                KeyEvent.KEYCODE_MEDIA_PAUSE -> {
+                    if (event.repeatCount == 0) togglePlayback()
+                    return true
+                }
             }
         }
         return super.dispatchKeyEvent(event)
+    }
+
+    /** Lightweight Toast helper used for on-device diagnostics (no logcat
+     *  available on the user's STB). Cancels the previous diagnostic toast
+     *  so rapid key presses don't queue up. */
+    private var diagToastInstance: android.widget.Toast? = null
+    private fun diagToast(msg: String) {
+        diagToastInstance?.cancel()
+        diagToastInstance = Toast.makeText(this, msg, Toast.LENGTH_LONG).also { it.show() }
+        Log.i(TAG, "diag: $msg")
     }
 
     private fun pageBy(dir: Int) {
         if (toolkit == 0L || pageCount == 0) return
         val next = (currentPage + dir).coerceIn(1, pageCount)
         if (next == currentPage) return
+        // Navigating to a different page — stop any in-flight playback so we
+        // never bleed the previous page's audio over the new one.
+        pagePlayer.pauseIfPlaying()
         currentPage = next
         renderAndShow(renderJobToken, currentPage)
     }
 
+    // ---------------------------------------------------------------------
+    // MIDI playback for the current page
+    // ---------------------------------------------------------------------
+
+    private fun togglePlayback() {
+        if (toolkit == 0L || pageCount == 0) {
+            diagToast("play: skipped toolkit=$toolkit pages=$pageCount")
+            return
+        }
+        if (midiFile == null || !midiReady) {
+            diagToast("play: MIDI not ready (still rendering) midiReady=$midiReady file=${midiFile != null}")
+            return
+        }
+        // Ensure the current page's start time is known. If the SVG for this
+        // page has already been rendered we have the measure id; otherwise
+        // we fall back to deriving it on demand (rare — only fires if the
+        // user hits play before the first render completes).
+        val measureId = firstMeasureIdByPage[currentPage]
+        if (measureId != null) {
+            resolvePageStartIfReady(currentPage, measureId)
+        } else {
+            diagToast("play: no measure id for page=$currentPage; priming")
+            primePageStartAsync(currentPage)
+        }
+        // Make sure we also know where this page ends — i.e. where the next
+        // page begins. Trigger an SVG render (no rasterise) if missing.
+        if (currentPage < pageCount && firstMeasureIdByPage[currentPage + 1] == null) {
+            primePageStartAsync(currentPage + 1)
+        }
+        val consumed = pagePlayer.toggle(currentPage)
+        val startMs = pagePlayer.debugPageStartMs(currentPage)
+        val err = pagePlayer.lastError
+        val state = pagePlayer.debugState()
+        diagToast("p=$currentPage start=${startMs}ms ok=$consumed $state${if (err != null) " err=$err" else ""}")
+    }
+
+    /**
+     * Render the full score to a MIDI file on disk. We do this off the UI
+     * thread once per score open. `getTimeForElement` only returns sensible
+     * values *after* RenderToMIDI(File) has run, so the page-start
+     * resolution below depends on this completing first.
+     */
+    private fun renderMidiAsync(jobToken: Long) {
+        lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                val handle = toolkit
+                if (handle == 0L) return@withContext Triple<File?, Boolean, Long>(null, false, 0L)
+                val out = File(cacheDir, "verovio-midi-$jobToken.mid")
+                if (out.exists()) out.delete()
+                val tMidi0 = System.currentTimeMillis()
+                val ok = VerovioNative.nativeRenderToMidiFile(handle, out.absolutePath)
+                val midiMs = System.currentTimeMillis() - tMidi0
+                if (!ok || !out.exists() || out.length() <= 0L) {
+                    Log.w(TAG, "renderToMIDIFile failed (ok=$ok, exists=${out.exists()}, size=${out.length()})")
+                    Triple<File?, Boolean, Long>(null, ok, out.length())
+                } else {
+                    Log.i(TAG, "timing/native verovio midi=${midiMs}ms size=${out.length()} -> ${out.absolutePath}")
+                    Triple<File?, Boolean, Long>(out, true, midiMs)
+                }
+            }
+            if (jobToken != renderJobToken) {
+                result.first?.delete()
+                return@launch
+            }
+            val file = result.first
+            if (file == null) {
+                midiReady = false
+                diagToast("MIDI render FAILED ok=${result.second} bytes=${result.third}")
+                return@launch
+            }
+            midiFile = file
+            pagePlayer.setMidiFile(file)
+            midiReady = true
+            diagToast("MIDI ready ${file.length()}B in ${result.third}ms pages cached=${firstMeasureIdByPage.size}")
+            // Resolve any page starts whose measure id we already cached
+            // while the MIDI was being rendered.
+            for ((page, id) in firstMeasureIdByPage.toMap()) {
+                resolvePageStartIfReady(page, id)
+            }
+        }
+    }
+
+    /**
+     * If both the MIDI is ready and we know the first-measure id for [page],
+     * push the resolved start time into [pagePlayer]. Safe to call multiple
+     * times — PagePlayer overwrites entries idempotently.
+     */
+    private fun resolvePageStartIfReady(page: Int, measureId: String) {
+        if (!midiReady || toolkit == 0L) return
+        val ms = VerovioNative.nativeGetTimeForElement(toolkit, measureId)
+        if (ms < 0) {
+            diagToast("page=$page id=$measureId no MIDI time")
+            return
+        }
+        Log.i(TAG, "resolvePageStartIfReady: page=$page id=$measureId -> ${ms}ms")
+        pagePlayer.setPageStartMs(page, ms)
+    }
+
+    /** Render just enough of a page's SVG to harvest its first measure id
+     *  (no rasterisation). Used to fill in the end-of-page boundary when
+     *  the user requests playback before navigating to the next page. */
+    private fun primePageStartAsync(page: Int) {
+        if (page in firstMeasureIdByPage) return
+        if (page < 1 || page > pageCount) return
+        val token = renderJobToken
+        lifecycleScope.launch(Dispatchers.IO) {
+            val handle = toolkit
+            if (handle == 0L) return@launch
+            val svgText = try {
+                VerovioNative.nativeRenderToSvg(handle, page)
+            } catch (t: Throwable) {
+                Log.w(TAG, "primePageStart: render page=$page failed", t)
+                return@launch
+            }
+            if (token != renderJobToken) return@launch
+            val id = extractFirstMeasureId(svgText) ?: return@launch
+            withContext(Dispatchers.Main) {
+                firstMeasureIdByPage[page] = id
+                resolvePageStartIfReady(page, id)
+            }
+        }
+    }
+
+    /**
+     * Find the first `<g class="measure" id="...">` (or `id=` before
+     * `class=`) in a Verovio-rendered SVG string and return its xml:id.
+     */
+    private fun extractFirstMeasureId(svg: String): String? {
+        // Verovio emits both class then id and id then class depending on
+        // version, so try both orders. The class list is always exactly
+        // "measure" for the surrounding group.
+        MEASURE_CLASS_ID.find(svg)?.groupValues?.getOrNull(1)?.let { return it }
+        MEASURE_ID_CLASS.find(svg)?.groupValues?.getOrNull(1)?.let { return it }
+        return null
+    }
+
     companion object {
         private const val TAG = "ScoreReader/Verovio"
+
+        /** Matches a measure `<g>` whose `class` attribute appears before `id`. */
+        private val MEASURE_CLASS_ID =
+            Regex("""<g\b[^>]*\bclass="[^"]*\bmeasure\b[^"]*"[^>]*\bid="([^"]+)"""")
+        /** Matches a measure `<g>` whose `id` attribute appears before `class`. */
+        private val MEASURE_ID_CLASS =
+            Regex("""<g\b[^>]*\bid="([^"]+)"[^>]*\bclass="[^"]*\bmeasure\b[^"]*"""")
 
         /** Loaded once per process — AndroidSVG's resolver is global. */
         @Volatile
