@@ -62,6 +62,7 @@ class SettingsActivity : AppCompatActivity() {
         wireDarkModeSwitch()
         wireScanButton()
         wireOnlineUrl()
+        wireUpdate()
     }
 
     // ---------------------------------------------------------------------
@@ -167,6 +168,23 @@ class SettingsActivity : AppCompatActivity() {
                 settings.onlineLibraryUrl = s?.toString().orEmpty()
             }
         })
+    }
+
+    private fun wireUpdate() {
+        binding.editUpdateUrl.setText(settings.updateManifestUrl)
+        binding.editUpdateUrl.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
+            override fun afterTextChanged(s: Editable?) {
+                settings.updateManifestUrl = s?.toString().orEmpty()
+            }
+        })
+        binding.btnCheckUpdate.setOnClickListener {
+            // Clear the "skipped" memory so an explicit user-initiated check
+            // always offers any available newer version.
+            settings.skippedUpdateVersionCode = 0
+            UpdateManager(this).checkAndPromptAsync(lifecycleScope, silent = false)
+        }
     }
 
     private fun ensureStoragePermissionThen(block: () -> Unit) {

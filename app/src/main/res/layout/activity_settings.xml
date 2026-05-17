@@ -42,6 +42,16 @@
             android:layout_height="wrap_content"
             android:orientation="vertical">
 
+            <!-- Quick action: check for app updates. The actual URL field lives
+                 further down in the Auto-update section. -->
+            <Button
+                android:id="@+id/btnCheckUpdate"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:layout_marginBottom="16dp"
+                android:text="@string/action_check_update" />
+
             <!-- Engine -->
             <TextView
                 style="@style/SettingsSection"
@@ -157,6 +167,30 @@
                 android:textColor="@color/text_primary"
                 android:textColorHint="@color/text_tertiary"
                 tools:text="http://192.168.0.10:8081/groups.json" />
+
+            <View style="@style/SettingsDivider" />
+
+            <!-- Auto-update -->
+            <TextView
+                style="@style/SettingsSection"
+                android:text="@string/settings_section_update" />
+
+            <TextView
+                style="@style/SettingsValueLabel"
+                android:text="@string/settings_update_url_label" />
+
+            <EditText
+                android:id="@+id/editUpdateUrl"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:layout_marginBottom="24dp"
+                android:inputType="textUri"
+                android:singleLine="true"
+                android:importantForAutofill="no"
+                android:textColor="@color/text_primary"
+                android:textColorHint="@color/text_tertiary"
+                tools:text="https://authuir.github.io/ScoreReader/update.json" />
 
         </LinearLayout>
     </ScrollView>

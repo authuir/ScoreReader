@@ -52,6 +52,19 @@ class AppSettings(context: Context) {
             prefs.edit().putString(KEY_ONLINE_URL, trimmed.ifEmpty { DEFAULT_ONLINE_URL }).apply()
         }
 
+    var updateManifestUrl: String
+        get() = prefs.getString(KEY_UPDATE_URL, DEFAULT_UPDATE_URL) ?: DEFAULT_UPDATE_URL
+        set(value) {
+            val trimmed = value.trim()
+            prefs.edit().putString(KEY_UPDATE_URL, trimmed.ifEmpty { DEFAULT_UPDATE_URL }).apply()
+        }
+
+    /** Last update versionCode the user dismissed; used so we don't nag on
+     *  every startup once they've seen and skipped an offer. */
+    var skippedUpdateVersionCode: Int
+        get() = prefs.getInt(KEY_SKIPPED_UPDATE, 0)
+        set(value) { prefs.edit().putInt(KEY_SKIPPED_UPDATE, value).apply() }
+
     companion object {
         const val PREFS = "score_reader_engine" // kept for backwards-compat with the old toggle
 
@@ -60,6 +73,8 @@ class AppSettings(context: Context) {
         const val KEY_VEROVIO_SCALE = "verovio_scale"
         const val KEY_DARK_MODE = "dark_mode"
         const val KEY_ONLINE_URL = "online_library_url"
+        const val KEY_UPDATE_URL = "update_manifest_url"
+        const val KEY_SKIPPED_UPDATE = "skipped_update_version_code"
 
         const val ENGINE_WEBVIEW = "webview"
         const val ENGINE_VEROVIO = "verovio"
@@ -79,5 +94,12 @@ class AppSettings(context: Context) {
         // Default points at the bundled `online-library/server.py` running on
         // the developer's LAN. Override in Settings → Online library URL.
         const val DEFAULT_ONLINE_URL = "https://authuir.github.io/ScoreReader/groups.json"
+
+        // Auto-update manifest. JSON shape:
+        //   { "versionCode": 5, "versionName": "0.5.0",
+        //     "apkUrl": "http://.../app-release.apk",
+        //     "releaseNotes": "..." (optional) }
+        // Defaults to the local dev release endpoint (tools/serve-release.ps1).
+        const val DEFAULT_UPDATE_URL = "https://authuir.github.io/ScoreReader/update.json"
     }
 }

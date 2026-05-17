@@ -27,6 +27,23 @@
     <string name="msg_play_midi_loading">Preparing MIDI… try again in a moment</string>
     <string name="msg_play_no_page_time">Cannot resolve start time for this page</string>
 
+    <!-- Auto-update -->
+    <string name="update_dialog_title">Update available</string>
+    <string name="update_dialog_message">Current version: %1$s\nNew version: %2$s</string>
+    <string name="update_dialog_install">Install</string>
+    <string name="update_dialog_skip">Skip this version</string>
+    <string name="update_dialog_later">Later</string>
+    <string name="update_downloading_title">Downloading update</string>
+    <string name="update_downloading_message">%1$d%% complete…</string>
+    <string name="update_failed_title">Update failed</string>
+    <string name="update_failed_message">Couldn\'t download the update.\n\n%1$s</string>
+    <string name="update_check_failed">Couldn\'t check for updates: %1$s</string>
+    <string name="update_no_update">You\'re already on the latest version (%1$s).</string>
+    <string name="update_grant_install_required">Allow installs from this app, then retry.</string>
+    <string name="update_install_launch_failed">Couldn\'t open installer: %1$s</string>
+    <string name="action_check_update">Check for updates</string>
+    <string name="settings_update_url_label">Update manifest URL</string>
+
     <!-- Engine toggle (HomeActivity) -->
     <string name="engine_webview">Engine: WebView</string>
     <string name="engine_verovio">Engine: Verovio (JNI)</string>
@@ -48,6 +65,7 @@
     <string name="settings_section_online">Online library</string>
     <string name="settings_online_url_label">Root endpoint URL (groups.json)</string>
     <string name="settings_online_url_hint">http://&lt;host&gt;:8081/groups.json</string>
+    <string name="settings_section_update">Auto-update</string>
     <string name="home_title">Authuir Score Reader</string>
     <string name="tab_recent">Recent</string>
     <string name="tab_favorite">Favorite</string>

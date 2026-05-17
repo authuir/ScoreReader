@@ -10,6 +10,10 @@
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
 
+    <!-- Auto-update: needed on API 26+ so we can launch the package installer
+         intent without the user having to flip a per-app toggle by hand. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
     <!-- Set-top box / Android TV friendliness -->
     <uses-feature
         android:name="android.hardware.touchscreen"
@@ -79,5 +83,25 @@
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:launchMode="singleTop"
             android:parentActivityName=".HomeActivity" />
+
+        <!-- Auto-update: expose the downloaded APK under a content:// URI so
+             the platform installer can read it on API 24+. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.updates.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/update_file_paths" />
+        </provider>
+
+        <!-- Auto-update: receives PackageInstaller status callbacks (success,
+             failure, pending-user-confirmation) for the install session
+             committed by UpdateManager. Not exported — only the system
+             dispatches to it via the PendingIntent we hand out. -->
+        <receiver
+            android:name=".UpdateInstallReceiver"
+            android:exported="false" />
     </application>
 </manifest>

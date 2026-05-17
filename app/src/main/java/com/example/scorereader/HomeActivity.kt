@@ -106,6 +106,10 @@ class HomeActivity : AppCompatActivity() {
             startActivity(Intent(this, SettingsActivity::class.java))
         }
         binding.btnAddGroup.setOnClickListener { showAddGroupDialog() }
+
+        // Background self-update check. Silent on errors / "no update" so
+        // an offline STB simply sees nothing happen.
+        UpdateManager(this).checkAndPromptAsync(lifecycleScope, silent = true)
     }
 
     override fun onResume() {

@@ -39,6 +39,10 @@ class SimpleMidiSynth {
     private var renderThread: Thread? = null
     @Volatile private var shouldStop: Boolean = false
     @Volatile private var playing: Boolean = false
+    @Volatile private var playStartUs: Long = 0L
+    @Volatile private var headFramesAtStart: Long = 0L
+    @Volatile private var currentTrack: AudioTrack? = null
+    @Volatile private var renderedUs: Long = 0L
 
     fun setMidiFile(file: File): Boolean {
         stop()
@@ -60,6 +64,22 @@ class SimpleMidiSynth {
     fun totalDurationMs(): Int = (totalDurationUs / 1000).toInt()
     fun eventCount(): Int = events.size
     fun isPlaying(): Boolean = playing
+
+    /** Current audible playback position in ms (measured from the start of
+     *  the piece). Uses [AudioTrack.getPlaybackHeadPosition] when available
+     *  so the value tracks what's actually coming out of the speakers, not
+     *  the buffer write cursor (which leads audio by a few hundred ms). */
+    fun positionMs(): Int {
+        val t = currentTrack
+        if (t != null) {
+            val frames = try { t.playbackHeadPosition.toLong() and 0xFFFFFFFFL } catch (_: Throwable) { -1L }
+            if (frames >= 0L) {
+                val playedUs = (frames * 1_000_000L) / SAMPLE_RATE
+                return ((playStartUs + playedUs) / 1000L).toInt()
+            }
+        }
+        return (renderedUs / 1000L).toInt()
+    }
 
     fun play(fromMs: Int, endMs: Int) {
         stop()
@@ -136,6 +156,9 @@ class SimpleMidiSynth {
             track.release()
             return
         }
+        currentTrack = track
+        playStartUs = startUs
+        renderedUs = startUs
 
         val voices = ArrayList<Voice>(64)
         val buf = ShortArray(bufFrames)
@@ -168,10 +191,12 @@ class SimpleMidiSynth {
                 }
                 track.write(buf, 0, bufFrames)
                 currentUs += frameUs
+                renderedUs = currentUs
             }
         } finally {
             try { track.stop() } catch (_: Throwable) {}
             try { track.release() } catch (_: Throwable) {}
+            currentTrack = null
         }
     }
 

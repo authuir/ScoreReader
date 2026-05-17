@@ -21,6 +21,17 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
+    <!-- Active-measure highlight: same bounds as the score image so the
+         overlay's pixel coordinates align 1:1 with the bitmap. -->
+    <com.example.scorereader.MeasureHighlightOverlay
+        android:id="@+id/measureHighlight"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        app:layout_constraintTop_toTopOf="@id/scoreImage"
+        app:layout_constraintBottom_toBottomOf="@id/scoreImage"
+        app:layout_constraintStart_toStartOf="@id/scoreImage"
+        app:layout_constraintEnd_toEndOf="@id/scoreImage" />
+
     <!-- Tiny corner indicator that pops up while the page is being played
          back via MIDI. Doesn't take focus and never covers more than a sliver
          of the page. -->

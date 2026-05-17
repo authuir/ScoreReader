@@ -8,6 +8,9 @@ import android.graphics.Color
 import android.graphics.Typeface
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
 import android.util.Base64
 import android.util.Log
 import android.view.KeyEvent
@@ -65,8 +68,16 @@ class VerovioMainActivity : AppCompatActivity() {
      *  as pages are rasterised so playback bounds can be resolved without
      *  pre-rendering the whole score. */
     private val firstMeasureIdByPage = HashMap<Int, String>()
+    /** All measures (id + pixel bbox) we extracted from each page's SVG. */
+    private val pageMeasures = HashMap<Int, SvgMeasureExtractor.ExtractResult>()
+    /** Measure xml:id → MIDI onset (ms from start of piece). Filled lazily
+     *  after the MIDI render completes and each page is rendered. */
+    private val measureStartMs = HashMap<String, Int>()
     /** True once the toolkit has produced a MIDI file for the current score. */
     private var midiReady: Boolean = false
+    /** UI ticker for the active-measure highlight while playback runs. */
+    private val highlightTicker = Handler(Looper.getMainLooper())
+    private var highlightTickerRunning: Boolean = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -85,7 +96,7 @@ class VerovioMainActivity : AppCompatActivity() {
             }
         }
         pagePlayer.onError = { msg ->
-            runOnUiThread { diagToast("MP: $msg") }
+            Log.w(TAG, "PagePlayer error: $msg")
         }
 
         handleIntent(intent)
@@ -111,10 +122,13 @@ class VerovioMainActivity : AppCompatActivity() {
 
     override fun onPause() {
         pagePlayer.pauseIfPlaying()
+        stopHighlightTicker()
+        binding.measureHighlight.clear()
         super.onPause()
     }
 
     override fun onDestroy() {
+        stopHighlightTicker()
         pagePlayer.release()
         destroyToolkit()
         for (b in pageBitmaps.values) b.recycle()
@@ -160,6 +174,10 @@ class VerovioMainActivity : AppCompatActivity() {
         pagePlayer.release()
         pagePlayer.clearPageBounds()
         firstMeasureIdByPage.clear()
+        pageMeasures.clear()
+        measureStartMs.clear()
+        stopHighlightTicker()
+        binding.measureHighlight.clear()
         midiFile = null
         midiReady = false
 
@@ -355,6 +373,20 @@ class VerovioMainActivity : AppCompatActivity() {
             resolvePageStartIfReady(pageNo, id)
         }
 
+        // Also extract *all* measures + their viewBox-space bounding boxes
+        // so the playback ticker can highlight whichever one is currently
+        // sounding. The overlay applies the viewBox -> screen transform
+        // itself so it stays correct even when the ImageView's drawn area
+        // differs from the bitmap size (status bar / cutout insets).
+        val extracted = SvgMeasureExtractor.extract(svgText)
+        if (extracted.measures.isNotEmpty()) {
+            pageMeasures[pageNo] = extracted
+            // Resolve onsets immediately if MIDI is already rendered.
+            if (midiReady) {
+                for (m in extracted.measures) resolveMeasureStartIfReady(m.id)
+            }
+        }
+
         val tParse0 = System.currentTimeMillis()
         val svg = SVG.getFromString(svgText)
         val parseMs = System.currentTimeMillis() - tParse0
@@ -412,12 +444,6 @@ class VerovioMainActivity : AppCompatActivity() {
     // ---------------------------------------------------------------------
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
-            // Transient on-screen diagnostic: show every keycode we see so a
-            // user without logcat can identify what their remote's centre
-            // button actually sends.
-            diagToast("key=${event.keyCode} name=${KeyEvent.keyCodeToString(event.keyCode)}")
-        }
         if (event.action == KeyEvent.ACTION_DOWN) {
             when (event.keyCode) {
                 KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_PAGE_UP -> {
@@ -442,16 +468,6 @@ class VerovioMainActivity : AppCompatActivity() {
         return super.dispatchKeyEvent(event)
     }
 
-    /** Lightweight Toast helper used for on-device diagnostics (no logcat
-     *  available on the user's STB). Cancels the previous diagnostic toast
-     *  so rapid key presses don't queue up. */
-    private var diagToastInstance: android.widget.Toast? = null
-    private fun diagToast(msg: String) {
-        diagToastInstance?.cancel()
-        diagToastInstance = Toast.makeText(this, msg, Toast.LENGTH_LONG).also { it.show() }
-        Log.i(TAG, "diag: $msg")
-    }
-
     private fun pageBy(dir: Int) {
         if (toolkit == 0L || pageCount == 0) return
         val next = (currentPage + dir).coerceIn(1, pageCount)
@@ -459,6 +475,8 @@ class VerovioMainActivity : AppCompatActivity() {
         // Navigating to a different page — stop any in-flight playback so we
         // never bleed the previous page's audio over the new one.
         pagePlayer.pauseIfPlaying()
+        stopHighlightTicker()
+        binding.measureHighlight.clear()
         currentPage = next
         renderAndShow(renderJobToken, currentPage)
     }
@@ -469,11 +487,11 @@ class VerovioMainActivity : AppCompatActivity() {
 
     private fun togglePlayback() {
         if (toolkit == 0L || pageCount == 0) {
-            diagToast("play: skipped toolkit=$toolkit pages=$pageCount")
+            Log.i(TAG, "togglePlayback skipped toolkit=$toolkit pages=$pageCount")
             return
         }
         if (midiFile == null || !midiReady) {
-            diagToast("play: MIDI not ready (still rendering) midiReady=$midiReady file=${midiFile != null}")
+            Log.i(TAG, "togglePlayback MIDI not ready midiReady=$midiReady file=${midiFile != null}")
             return
         }
         // Ensure the current page's start time is known. If the SVG for this
@@ -484,7 +502,7 @@ class VerovioMainActivity : AppCompatActivity() {
         if (measureId != null) {
             resolvePageStartIfReady(currentPage, measureId)
         } else {
-            diagToast("play: no measure id for page=$currentPage; priming")
+            Log.i(TAG, "togglePlayback no measure id for page=$currentPage; priming")
             primePageStartAsync(currentPage)
         }
         // Make sure we also know where this page ends — i.e. where the next
@@ -493,10 +511,32 @@ class VerovioMainActivity : AppCompatActivity() {
             primePageStartAsync(currentPage + 1)
         }
         val consumed = pagePlayer.toggle(currentPage)
-        val startMs = pagePlayer.debugPageStartMs(currentPage)
-        val err = pagePlayer.lastError
-        val state = pagePlayer.debugState()
-        diagToast("p=$currentPage start=${startMs}ms ok=$consumed $state${if (err != null) " err=$err" else ""}")
+        if (consumed && pagePlayer.isPlaying()) {
+            startHighlightTicker()
+            // ---- Highlight diagnostics --------------------------------
+            // One-shot summary of the highlight pipeline so we can tell why
+            // (if at all) the active-measure overlay is missing on this STB.
+            val pageData = pageMeasures[currentPage]
+            val measuresOnPage = pageData?.measures
+            val mCount = measuresOnPage?.size ?: 0
+            val withStart = measuresOnPage?.count { measureStartMs.containsKey(it.id) } ?: 0
+            val sampleBox = measuresOnPage?.firstOrNull { measureStartMs.containsKey(it.id) }?.bbox
+            val box = sampleBox?.let {
+                "[${it.left.toInt()},${it.top.toInt()},${it.right.toInt()},${it.bottom.toInt()}]"
+            } ?: "none"
+            val vb = pageData?.viewBox?.let {
+                "${it.width().toInt()}x${it.height().toInt()}"
+            } ?: "-"
+            diagToastHl(
+                "hl: page=$currentPage m=$mCount starts=$withStart " +
+                    "pos=${pagePlayer.positionMs()}ms ov=${binding.measureHighlight.width}x${binding.measureHighlight.height} " +
+                    "vb=$vb bbox=$box"
+            )
+            // -----------------------------------------------------------
+        } else {
+            stopHighlightTicker()
+            binding.measureHighlight.clear()
+        }
     }
 
     /**
@@ -530,17 +570,23 @@ class VerovioMainActivity : AppCompatActivity() {
             val file = result.first
             if (file == null) {
                 midiReady = false
-                diagToast("MIDI render FAILED ok=${result.second} bytes=${result.third}")
+                Log.w(TAG, "MIDI render FAILED ok=${result.second} bytes=${result.third}")
                 return@launch
             }
             midiFile = file
             pagePlayer.setMidiFile(file)
             midiReady = true
-            diagToast("MIDI ready ${file.length()}B in ${result.third}ms pages cached=${firstMeasureIdByPage.size}")
+            Log.i(TAG, "MIDI ready ${file.length()}B in ${result.third}ms pages cached=${firstMeasureIdByPage.size}")
             // Resolve any page starts whose measure id we already cached
             // while the MIDI was being rendered.
             for ((page, id) in firstMeasureIdByPage.toMap()) {
                 resolvePageStartIfReady(page, id)
+            }
+            // Also resolve onset times for every measure we already extracted
+            // from rendered pages, so the playback highlight can light up
+            // immediately on the first toggle.
+            for ((_, result) in pageMeasures.toMap()) {
+                for (m in result.measures) resolveMeasureStartIfReady(m.id)
             }
         }
     }
@@ -554,11 +600,97 @@ class VerovioMainActivity : AppCompatActivity() {
         if (!midiReady || toolkit == 0L) return
         val ms = VerovioNative.nativeGetTimeForElement(toolkit, measureId)
         if (ms < 0) {
-            diagToast("page=$page id=$measureId no MIDI time")
+            Log.i(TAG, "resolvePageStartIfReady: page=$page id=$measureId no MIDI time")
             return
         }
         Log.i(TAG, "resolvePageStartIfReady: page=$page id=$measureId -> ${ms}ms")
         pagePlayer.setPageStartMs(page, ms)
+    }
+
+    /** Resolve and cache the MIDI onset for a single measure id. */
+    private fun resolveMeasureStartIfReady(measureId: String) {
+        if (!midiReady || toolkit == 0L) return
+        if (measureStartMs.containsKey(measureId)) return
+        val ms = VerovioNative.nativeGetTimeForElement(toolkit, measureId)
+        if (ms >= 0) measureStartMs[measureId] = ms
+    }
+
+    // ---------------------------------------------------------------------
+    // Active-measure highlight ticker
+    // ---------------------------------------------------------------------
+
+    private val highlightRunnable = object : Runnable {
+        override fun run() {
+            if (!highlightTickerRunning) return
+            if (!pagePlayer.isPlaying()) {
+                stopHighlightTicker()
+                binding.measureHighlight.clear()
+                return
+            }
+            updateMeasureHighlight()
+            highlightTicker.postDelayed(this, HIGHLIGHT_INTERVAL_MS)
+        }
+    }
+
+    private fun startHighlightTicker() {
+        if (highlightTickerRunning) return
+        highlightTickerRunning = true
+        highlightTicker.post(highlightRunnable)
+    }
+
+    private fun stopHighlightTicker() {
+        highlightTickerRunning = false
+        highlightTicker.removeCallbacks(highlightRunnable)
+    }
+
+    private fun updateMeasureHighlight() {
+        val result = pageMeasures[currentPage] ?: return
+        val measures = result.measures
+        if (measures.isEmpty()) return
+        val posMs = pagePlayer.positionMs()
+        // Find the measure on the current page whose [start, nextStart)
+        // contains posMs. Measures with unknown onset are skipped.
+        var bestBox: android.graphics.RectF? = null
+        var bestStart = Int.MIN_VALUE
+        var bestId: String? = null
+        for (m in measures) {
+            val start = measureStartMs[m.id] ?: continue
+            if (start <= posMs && start > bestStart) {
+                bestStart = start
+                bestBox = m.bbox
+                bestId = m.id
+            }
+        }
+        binding.measureHighlight.setMeasure(bestBox, result.viewBox)
+        // Diagnostic: every ~1s while playing, surface what the ticker is
+        // actually doing. Comment out once highlighting is confirmed.
+        val now = SystemClock.uptimeMillis()
+        if (now - lastHlDiagMs > 1000L) {
+            lastHlDiagMs = now
+            val tot = measures.size
+            val knownStarts = measures.count { measureStartMs.containsKey(it.id) }
+            val bboxStr = bestBox?.let {
+                "[${it.left.toInt()},${it.top.toInt()},${it.right.toInt()},${it.bottom.toInt()}]"
+            } ?: "null"
+            val vb = result.viewBox
+            val vbStr = "[${vb.left.toInt()},${vb.top.toInt()},${vb.right.toInt()},${vb.bottom.toInt()}]"
+            val ovW = binding.measureHighlight.width
+            val ovH = binding.measureHighlight.height
+            diagToastHl(
+                "hl t=${posMs}ms id=${bestId ?: "-"} match=${if (bestBox != null) 1 else 0}/$knownStarts/$tot " +
+                    "ov=${ovW}x${ovH} vb=$vbStr bbox=$bboxStr"
+            )
+        }
+    }
+
+    // Diagnostic Toast for highlight pipeline only. Single, cancellable so
+    // rapid ticks don't stack up.
+    private var diagHlToastInstance: android.widget.Toast? = null
+    private var lastHlDiagMs: Long = 0L
+    private fun diagToastHl(msg: String) {
+        diagHlToastInstance?.cancel()
+        diagHlToastInstance = Toast.makeText(this, msg, Toast.LENGTH_SHORT).also { it.show() }
+        Log.i(TAG, "hl-diag: $msg")
     }
 
     /** Render just enough of a page's SVG to harvest its first measure id
@@ -601,6 +733,7 @@ class VerovioMainActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "ScoreReader/Verovio"
+        private const val HIGHLIGHT_INTERVAL_MS = 60L
 
         /** Matches a measure `<g>` whose `class` attribute appears before `id`. */
         private val MEASURE_CLASS_ID =

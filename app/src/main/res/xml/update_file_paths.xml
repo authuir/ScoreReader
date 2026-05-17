@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Auto-update: downloaded APKs live here. cache-path maps to
+         Context.getCacheDir(). -->
+    <cache-path
+        name="updates"
+        path="updates/" />
+</paths>

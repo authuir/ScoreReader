@@ -79,6 +79,9 @@ class PagePlayer {
 
     fun isPlaying(): Boolean = synth.isPlaying()
 
+    /** Current audible position (ms from start of the piece). */
+    fun positionMs(): Int = synth.positionMs()
+
     /**
      * Single-button "play current page / pause" toggle.
      *
