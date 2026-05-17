@@ -10,7 +10,6 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.os.SystemClock
 import android.util.Base64
 import android.util.Log
 import android.view.KeyEvent
@@ -513,26 +512,6 @@ class VerovioMainActivity : AppCompatActivity() {
         val consumed = pagePlayer.toggle(currentPage)
         if (consumed && pagePlayer.isPlaying()) {
             startHighlightTicker()
-            // ---- Highlight diagnostics --------------------------------
-            // One-shot summary of the highlight pipeline so we can tell why
-            // (if at all) the active-measure overlay is missing on this STB.
-            val pageData = pageMeasures[currentPage]
-            val measuresOnPage = pageData?.measures
-            val mCount = measuresOnPage?.size ?: 0
-            val withStart = measuresOnPage?.count { measureStartMs.containsKey(it.id) } ?: 0
-            val sampleBox = measuresOnPage?.firstOrNull { measureStartMs.containsKey(it.id) }?.bbox
-            val box = sampleBox?.let {
-                "[${it.left.toInt()},${it.top.toInt()},${it.right.toInt()},${it.bottom.toInt()}]"
-            } ?: "none"
-            val vb = pageData?.viewBox?.let {
-                "${it.width().toInt()}x${it.height().toInt()}"
-            } ?: "-"
-            diagToastHl(
-                "hl: page=$currentPage m=$mCount starts=$withStart " +
-                    "pos=${pagePlayer.positionMs()}ms ov=${binding.measureHighlight.width}x${binding.measureHighlight.height} " +
-                    "vb=$vb bbox=$box"
-            )
-            // -----------------------------------------------------------
         } else {
             stopHighlightTicker()
             binding.measureHighlight.clear()
@@ -652,45 +631,14 @@ class VerovioMainActivity : AppCompatActivity() {
         // contains posMs. Measures with unknown onset are skipped.
         var bestBox: android.graphics.RectF? = null
         var bestStart = Int.MIN_VALUE
-        var bestId: String? = null
         for (m in measures) {
             val start = measureStartMs[m.id] ?: continue
             if (start <= posMs && start > bestStart) {
                 bestStart = start
                 bestBox = m.bbox
-                bestId = m.id
             }
         }
         binding.measureHighlight.setMeasure(bestBox, result.viewBox)
-        // Diagnostic: every ~1s while playing, surface what the ticker is
-        // actually doing. Comment out once highlighting is confirmed.
-        val now = SystemClock.uptimeMillis()
-        if (now - lastHlDiagMs > 1000L) {
-            lastHlDiagMs = now
-            val tot = measures.size
-            val knownStarts = measures.count { measureStartMs.containsKey(it.id) }
-            val bboxStr = bestBox?.let {
-                "[${it.left.toInt()},${it.top.toInt()},${it.right.toInt()},${it.bottom.toInt()}]"
-            } ?: "null"
-            val vb = result.viewBox
-            val vbStr = "[${vb.left.toInt()},${vb.top.toInt()},${vb.right.toInt()},${vb.bottom.toInt()}]"
-            val ovW = binding.measureHighlight.width
-            val ovH = binding.measureHighlight.height
-            diagToastHl(
-                "hl t=${posMs}ms id=${bestId ?: "-"} match=${if (bestBox != null) 1 else 0}/$knownStarts/$tot " +
-                    "ov=${ovW}x${ovH} vb=$vbStr bbox=$bboxStr"
-            )
-        }
-    }
-
-    // Diagnostic Toast for highlight pipeline only. Single, cancellable so
-    // rapid ticks don't stack up.
-    private var diagHlToastInstance: android.widget.Toast? = null
-    private var lastHlDiagMs: Long = 0L
-    private fun diagToastHl(msg: String) {
-        diagHlToastInstance?.cancel()
-        diagHlToastInstance = Toast.makeText(this, msg, Toast.LENGTH_SHORT).also { it.show() }
-        Log.i(TAG, "hl-diag: $msg")
     }
 
     /** Render just enough of a page's SVG to harvest its first measure id
