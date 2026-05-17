@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Network security config for ScoreReader.
+
+    Why this exists:
+        We target devices going back to API 23 (Android 6.0), and a lot of
+        Android TV / STB boxes ship without the Let's Encrypt root CAs.
+        github.io (and many other Pages / static-site hosts) is signed by
+        Let's Encrypt, so on those boxes the JVM throws
+        `java.security.cert.CertPathValidatorException: Trust anchor for
+        certification path not found`.
+
+        We solve it by *adding* the ISRG Root X1 / X2 certificates as
+        trust anchors on top of whatever the system already trusts. This
+        is purely additive — modern devices keep using their own up-to-date
+        store and the bundled certs are simply ignored as duplicates.
+
+    cleartext:
+        Permitted so the LAN dev server (http://<host>:8081/groups.json)
+        keeps working. Remove `cleartextTrafficPermitted="true"` if you
+        ever want to enforce HTTPS-only.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+            <certificates src="@raw/isrg_root_x1" />
+            <certificates src="@raw/isrg_root_x2" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

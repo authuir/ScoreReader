@@ -25,4 +25,18 @@ object VerovioNative {
     external fun nativeGetVersion(handle: Long): String
     external fun nativeGetLog(handle: Long): String
     external fun nativeEnableLog(enabled: Boolean)
+
+    /**
+     * Renders the loaded score to a Standard MIDI File (`.mid`) at
+     * [filename]. Returns `false` if the toolkit hasn't loaded a score
+     * yet, or if the file couldn't be written.
+     */
+    external fun nativeRenderToMidiFile(handle: Long, filename: String): Boolean
+
+    /**
+     * Returns the real-time onset of the element with the given xml:id,
+     * in milliseconds from the start of the piece. Returns -1 if the
+     * element can't be found or the toolkit has no score loaded.
+     */
+    external fun nativeGetTimeForElement(handle: Long, xmlId: String): Int
 }

@@ -126,4 +126,25 @@ Java_com_example_scorereader_VerovioNative_nativeEnableLog(
     enableLog(enabled == JNI_TRUE);
 }
 
+JNIEXPORT jboolean JNICALL
+Java_com_example_scorereader_VerovioNative_nativeRenderToMidiFile(
+        JNIEnv *env, jclass, jlong handle, jstring filename) {
+    if (!handle) return JNI_FALSE;
+    const char *path = env->GetStringUTFChars(filename, nullptr);
+    bool ok = vrvToolkit_renderToMIDIFile(handleFromJlong(handle), path);
+    env->ReleaseStringUTFChars(filename, path);
+    return ok ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jint JNICALL
+Java_com_example_scorereader_VerovioNative_nativeGetTimeForElement(
+        JNIEnv *env, jclass, jlong handle, jstring xmlId) {
+    if (!handle) return -1;
+    const char *id = env->GetStringUTFChars(xmlId, nullptr);
+    double ms = vrvToolkit_getTimeForElement(handleFromJlong(handle), id);
+    env->ReleaseStringUTFChars(xmlId, id);
+    if (ms < 0) return -1;
+    return static_cast<jint>(ms);
+}
+
 } // extern "C"

@@ -78,6 +78,6 @@ class AppSettings(context: Context) {
 
         // Default points at the bundled `online-library/server.py` running on
         // the developer's LAN. Override in Settings → Online library URL.
-        const val DEFAULT_ONLINE_URL = "http://192.168.101.198:8081/groups.json"
+        const val DEFAULT_ONLINE_URL = "https://authuir.github.io/ScoreReader/groups.json"
     }
 }

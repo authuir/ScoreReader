@@ -11,6 +11,12 @@ class ScoreReaderApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // Add bundled root CAs (ISRG X1/X2) to the platform trust store so
+        // Android 6.0 STBs can talk to https://*.github.io. Safe no-op on
+        // newer devices that already trust those roots. Must run before any
+        // HttpsURLConnection in the process.
+        TlsTrustInstaller.install(this)
+
         // Apply the user's dark-mode preference before any activity inflates
         // its layout so we don't briefly flash the wrong theme.
         val settings = AppSettings(this)
