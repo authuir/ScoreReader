@@ -1,0 +1,3 @@
+# Put *.mxl / *.musicxml / *.xml files here and they will appear inside
+# the "Samples" group on the deployed Pages site. Optional `meta.json`
+# in the parent directory overrides the auto-generated id/title/description.

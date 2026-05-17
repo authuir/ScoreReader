@@ -54,20 +54,7 @@ class OnlineLibraryRepository(context: Context) {
         get() = File(appContext.cacheDir, "online-scores").apply { mkdirs() }
 
     fun fetch(manifestUrl: String): OnlineLibrary {
-        val url = URL(manifestUrl)
-        val text = url.openConnection().let { conn ->
-            (conn as HttpURLConnection).apply {
-                connectTimeout = 8_000
-                readTimeout = 8_000
-                requestMethod = "GET"
-                setRequestProperty("Accept", "application/json")
-            }
-            try {
-                conn.inputStream.bufferedReader().use { it.readText() }
-            } finally {
-                conn.disconnect()
-            }
-        }
+        val text = httpGetText(manifestUrl)
         val json = JSONObject(text)
         val base = baseUrlOf(manifestUrl)
         val arr = json.optJSONArray("items") ?: return OnlineLibrary(
@@ -102,6 +89,75 @@ class OnlineLibraryRepository(context: Context) {
             generatedAt = json.optString("generated_at").ifEmpty { null },
             items = items
         )
+    }
+
+    /**
+     * Fetches the *root* endpoint, which must be a `groups.json` — a list
+     * of group descriptors, each pointing to its own `library.json` via a
+     * relative or absolute URL.
+     *
+     * Group `url`s are resolved against the manifest's directory using the
+     * same rules as score `path`s (see [resolveDownloadUrl]).
+     */
+    fun fetchGroups(rootUrl: String): OnlineGroupIndex {
+        val text = httpGetText(rootUrl)
+        val json = JSONObject(text)
+        val generatedAt = json.optString("generated_at").ifEmpty { null }
+
+        val groupsArray = json.optJSONArray("groups")
+            ?: throw IllegalStateException("Response from $rootUrl has no `groups` array")
+
+        val out = ArrayList<OnlineGroup>(groupsArray.length())
+        for (i in 0 until groupsArray.length()) {
+            val o = groupsArray.optJSONObject(i) ?: continue
+            val groupUrl = o.optString("url")
+            if (groupUrl.isEmpty()) continue
+            val resolved = resolveManifestUrl(rootUrl, groupUrl)
+            val id = o.optString("id").ifEmpty { "group-$i" }
+            val title = o.optString("title").ifEmpty { id }
+            out += OnlineGroup(
+                id = id,
+                title = title,
+                description = o.optString("description").ifEmpty { null },
+                manifestUrl = resolved,
+                count = if (o.has("count") && !o.isNull("count")) o.optInt("count") else null,
+                totalSizeBytes = if (o.has("total_size_bytes") && !o.isNull("total_size_bytes"))
+                    o.optLong("total_size_bytes") else null,
+                isLocal = false
+            )
+        }
+        return OnlineGroupIndex(rootUrl = rootUrl, generatedAt = generatedAt, groups = out)
+    }
+
+    private fun httpGetText(urlString: String): String {
+        val url = URL(urlString)
+        return (url.openConnection() as HttpURLConnection).run {
+            connectTimeout = 8_000
+            readTimeout = 8_000
+            requestMethod = "GET"
+            setRequestProperty("Accept", "application/json")
+            try {
+                inputStream.bufferedReader().use { it.readText() }
+            } finally {
+                disconnect()
+            }
+        }
+    }
+
+    /**
+     * Resolves a child URL (e.g. a group's `url`) against the manifest URL
+     * using the same conventions as score `path`s:
+     *  - already absolute (`http://...` / `https://...`) — return as-is.
+     *  - absolute path (`/foo/bar.json`) — resolve against manifest host.
+     *  - relative (`groups/x/library.json`) — resolve against manifest dir.
+     */
+    private fun resolveManifestUrl(manifestUrl: String, child: String): String {
+        if (child.startsWith("http://") || child.startsWith("https://")) return child
+        return if (child.startsWith("/")) {
+            hostOnlyBaseOf(manifestUrl).trimEnd('/') + child
+        } else {
+            baseUrlOf(manifestUrl).trimEnd('/') + "/" + child.trimStart('/')
+        }
     }
 
     /**

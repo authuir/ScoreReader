@@ -1,85 +1,116 @@
 # ScoreReader online library
 
-A small Python helper that mirrors the public-domain MusicXML library at
-[`musetrainer/library`](https://github.com/musetrainer/library) into this
-repo and exposes it via a tiny HTTP server, so the ScoreReader Android app
-can browse and stream scores from your LAN/dev box.
+Static, group-based MusicXML library that the ScoreReader Android app's
+**Online** tab consumes. The directory you maintain (`public/groups/...`)
+is the source of truth; `build_site.py` derives every manifest from it,
+and `server.py` serves the result locally for development.
 
 ## Layout
 
 ```
 online-library/
-├── download_library.py   # fetches *.mxl from GitHub + rebuilds library.json
-├── server.py             # zero-dependency HTTP server
-├── library.json          # generated metadata (commit-friendly)
-└── scores/               # *.mxl content (git-ignored)
+├── build_site.py        # scans public/groups/<id>/scores/ and writes manifests
+├── server.py            # zero-dependency HTTP server (default root: public/)
+├── README.md            # this file
+└── public/              # everything served to the app + GitHub Pages
+    └── groups/
+        └── <group-id>/
+            ├── meta.json    # optional: { id, title, description }
+            └── scores/
+                └── *.mxl    # raw MusicXML (.mxl / .musicxml / .xml)
 ```
 
-## Step 1 — download + generate metadata
+After `build_site.py` runs, the deployable tree adds the generated files
+(all git-ignored):
 
-Requires Python 3.10+.
+```
+public/
+├── groups.json                       # top-level index of all groups
+├── index.html                        # human-friendly browser
+└── groups/<id>/library.json          # per-group score list
+```
+
+## Workflow
+
+Requires Python 3.10+. No third-party packages.
+
+### 1. Add a group
 
 ```pwsh
-cd online-library
-python download_library.py
+cd c:\GitRoot\ScoreReader
+New-Item -ItemType Directory -Path online-library\public\groups\classical\scores -Force
+Copy-Item path\to\Canon_in_D.mxl online-library\public\groups\classical\scores\
 ```
 
-The script:
-- Calls the GitHub Contents API to enumerate `scores/`.
-- Downloads each `.mxl` into `online-library/scores/` (skips files that already
-  match the upstream `size`).
-- Writes `library.json` with per-item `{id, title, filename, path, format,
-  size_bytes, sha256, git_sha, source_url, html_url}` plus a top-level
-  `{schema, generated_at, source, count, total_size_bytes}`.
+Optionally place a `meta.json` next to (i.e. one level above) `scores/`
+to override defaults:
 
-Useful flags:
+```json
+{
+  "id": "classical",
+  "title": "Classical Piano",
+  "description": "Bach, Beethoven, Chopin, ..."
+}
+```
 
-| Flag           | Meaning                                                     |
-| -------------- | ----------------------------------------------------------- |
-| `--force`      | Re-download even if a local file already exists.            |
-| `--no-fetch`   | Skip GitHub; just regenerate `library.json` from disk.      |
+Without `meta.json` the folder name is used for both `id` (slugified) and
+`title` (humanized).
 
-Set `GITHUB_TOKEN` in the environment to raise the unauthenticated rate
-limit from 60 to 5000 req/h:
+### 2. Generate manifests
 
 ```pwsh
-$env:GITHUB_TOKEN = "ghp_xxx..."
-python download_library.py
+python online-library\build_site.py
 ```
 
-## Step 2 — serve the library
+Outputs `public/groups.json`, `public/index.html`, and one
+`public/groups/<id>/library.json` per group. Re-run whenever you add or
+remove scores.
+
+### 3. Serve locally
 
 ```pwsh
-python server.py                   # listens on 0.0.0.0:8081
-python server.py --port 9000
-python server.py --host 127.0.0.1
+python online-library\server.py                  # listens on 0.0.0.0:8081
+python online-library\server.py --port 9000
+python online-library\server.py --host 127.0.0.1
+python online-library\server.py --root some/other/site
 ```
 
-Endpoints exposed:
+Endpoints:
 
-- `GET /`                    HTML index for sanity checks.
-- `GET /library.json`        the metadata manifest.
-- `GET /scores/<name>.mxl`   the raw MusicXML (zipped) file.
+| URL                                   | Content                       |
+| ------------------------------------- | ----------------------------- |
+| `GET /`                               | HTML index for sanity checks. |
+| `GET /groups.json`                    | top-level group index.        |
+| `GET /groups/<id>/library.json`       | per-group score manifest.     |
+| `GET /groups/<id>/scores/<file>.mxl`  | raw MusicXML.                 |
 
-CORS is wide-open (`Access-Control-Allow-Origin: *`) so this is suitable for
-LAN development only.
+CORS is wide-open (`Access-Control-Allow-Origin: *`); LAN dev only.
 
-## Step 3 — wire the app
+### 4. Point the app at it
 
-Point the upcoming "Online" tab at:
+In ScoreReader: **Settings → Online library URL**
 
 ```
-http://<this-machine-ip>:8081/library.json
+http://<this-machine-ip>:8081/groups.json
 ```
 
-The Android client should fetch `library.json`, list `items[].title`, and
-when the user picks an entry, GET `items[].path` (relative URL) from the
-same host.
+The **Online** tab fetches `groups.json`, lists every group, and when
+you tap one it fetches that group's `library.json` to list scores.
+You can also tap the **+** button in the group list to subscribe to any
+other `library.json` URL ad-hoc; those are saved locally on the device
+under `SharedPreferences("score_reader_online_groups")`.
 
-## Notes
+## GitHub Pages deploy
 
-- `scores/*.mxl` is git-ignored; the upstream repo is the source of truth.
-  Re-running `download_library.py` brings a fresh checkout back to the same
-  state.
-- `library.json` *is* committed so the Android app and CI can know what to
-  expect without hitting GitHub.
+`.github/workflows/online-library-pages.yml` runs `build_site.py` and
+publishes `online-library/public/` to Pages on every push to `main`.
+After enabling Pages (Settings → Pages → Source = GitHub Actions), point
+the app at:
+
+```
+https://<your-user>.github.io/<your-repo>/groups.json
+```
+
+Only the raw `.mxl` files under `public/groups/<id>/scores/` are
+committed; `groups.json`, `library.json` and `index.html` are regenerated
+by the workflow and excluded by `.gitignore`.

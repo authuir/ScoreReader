@@ -156,7 +156,7 @@
                 android:hint="@string/settings_online_url_hint"
                 android:textColor="@color/text_primary"
                 android:textColorHint="@color/text_tertiary"
-                tools:text="http://192.168.0.10:8081/library.json" />
+                tools:text="http://192.168.0.10:8081/groups.json" />
 
         </LinearLayout>
     </ScrollView>

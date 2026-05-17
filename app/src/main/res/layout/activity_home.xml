@@ -57,6 +57,38 @@
         </LinearLayout>
 
         <LinearLayout
+            android:id="@+id/addGroupContainer"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="12dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:visibility="gone">
+
+            <ImageButton
+                android:id="@+id/btnAddGroup"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:background="@drawable/icon_button_bg"
+                android:contentDescription="@string/cd_add_group"
+                android:src="@drawable/ic_add"
+                app:tint="@color/icon_button_tint"
+                android:scaleType="centerInside"
+                android:focusable="true"
+                android:nextFocusLeft="@id/btnOpen"
+                android:nextFocusRight="@+id/btnSettings"
+                android:nextFocusDown="@+id/recyclerRecents" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:text="@string/cd_add_group"
+                android:textColor="@color/text_primary"
+                android:textSize="14sp" />
+        </LinearLayout>
+
+        <LinearLayout
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginStart="12dp"

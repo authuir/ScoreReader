@@ -1,31 +1,35 @@
 """
 Generate the deployable static site for the ScoreReader online library.
 
-Given a directory layout like::
+Group-based layout, matching the Android app's "Online" tab
+(group list -> scores list)::
 
     online-library/public/
-    └── scores/
-        ├── My_Score_A.mxl
-        ├── My_Score_B.musicxml
-        └── ...
+    └── groups/
+        ├── classical/
+        │   ├── meta.json          # optional: id/title/description overrides
+        │   └── scores/
+        │       ├── ...mxl
+        │       └── ...musicxml
+        └── jazz/
+            └── scores/
+                └── ...mxl
 
-this script rewrites two files in place (idempotent)::
+After running this script the deployment tree looks like::
 
-    online-library/public/library.json   # metadata manifest (schema 1)
-    online-library/public/index.html     # human-friendly index page
+    online-library/public/
+    ├── groups.json                # lists every group + URL to its library.json.
+    │                              # Point the app at this.
+    ├── index.html                 # human-friendly browser
+    └── groups/<id>/library.json   # one per group
 
-The output directory is then ready to be uploaded as a GitHub Pages
-artifact and consumed by the ScoreReader Android app via::
+The Android app fetches `groups.json` (configured under Settings ->
+Online library URL) and drills into the chosen group's `library.json`
+to list scores.
 
-    https://<user>.github.io/<repo>/library.json
+Usage::
 
-The Android client treats `library.json`'s URL as the manifest URL and
-resolves each item's `path` relative to the manifest's *directory*, so the
-GitHub Pages sub-path (`/<repo>/`) just works as long as `path` starts with
-`scores/...` (no leading slash).
-
-Usage:
-    python build_site.py                              # writes ./public
+    python build_site.py
     python build_site.py --site-dir online-library/public
 """
 
@@ -36,15 +40,20 @@ import datetime as _dt
 import hashlib
 import html
 import json
+import re
 from pathlib import Path
 
 SUPPORTED_EXTENSIONS = {".mxl", ".musicxml", ".xml"}
 
 
+# --------------------------------------------------------------------------
+# Helpers
+# --------------------------------------------------------------------------
+
 def humanize_title(filename: str) -> str:
     """`Fur_Elise_Easy_Piano.mxl` -> `Fur Elise Easy Piano`."""
-    stem = filename.rsplit(".", 1)[0]
-    return stem.replace("_", " ").replace("  ", " ").strip()
+    stem = filename.rsplit(".", 1)[0] if "." in filename else filename
+    return stem.replace("_", " ").replace("-", " ").replace("  ", " ").strip()
 
 
 def sha256_of(path: Path) -> str:
@@ -55,7 +64,38 @@ def sha256_of(path: Path) -> str:
     return h.hexdigest()
 
 
+def now_utc_iso() -> str:
+    return _dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+
+
+def _load_meta(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception as e:
+        print(f"  ! Could not parse {path}: {e}")
+        return {}
+
+
+_ID_SAFE = re.compile(r"[^A-Za-z0-9_.-]+")
+
+
+def slugify(value: str) -> str:
+    """Make a folder-name-safe id string."""
+    return _ID_SAFE.sub("-", value.strip()).strip("-") or "group"
+
+
+# --------------------------------------------------------------------------
+# Per-group manifest (library.json)
+# --------------------------------------------------------------------------
+
 def discover_scores(scores_dir: Path) -> list[dict]:
+    """Build the `items` list for a single group's `library.json`.
+
+    `path` is RELATIVE to that library.json (so the Android client resolves
+    it correctly under any sub-path).
+    """
     entries: list[dict] = []
     for path in sorted(scores_dir.glob("*")):
         if not path.is_file():
@@ -68,9 +108,6 @@ def discover_scores(scores_dir: Path) -> list[dict]:
                 "id": path.stem,
                 "title": humanize_title(path.name),
                 "filename": path.name,
-                # Path is RELATIVE to library.json so the Android client can
-                # resolve it correctly under any base URL (LAN host, GitHub
-                # Pages sub-path, custom domain, ...).
                 "path": f"scores/{path.name}",
                 "format": path.suffix.lower().lstrip("."),
                 "size_bytes": size,
@@ -80,45 +117,123 @@ def discover_scores(scores_dir: Path) -> list[dict]:
     return entries
 
 
-def build_manifest(entries: list[dict]) -> dict:
+def build_group_manifest(scores_dir: Path) -> dict:
+    entries = discover_scores(scores_dir)
     return {
         "schema": 1,
-        "generated_at": _dt.datetime.utcnow()
-        .replace(microsecond=0)
-        .isoformat()
-        + "Z",
-        "source": {
-            "kind": "github-pages",
-            "description": "User-curated MusicXML library deployed via GitHub Pages.",
-        },
+        "generated_at": now_utc_iso(),
         "count": len(entries),
         "total_size_bytes": sum(int(e.get("size_bytes", 0)) for e in entries),
         "items": entries,
     }
 
 
-def render_index_html(manifest: dict) -> str:
-    items = manifest.get("items", [])
-    total = manifest.get("total_size_bytes", 0)
-    generated = manifest.get("generated_at", "")
+# --------------------------------------------------------------------------
+# Top-level groups.json
+# --------------------------------------------------------------------------
+
+def emit_group(
+    *,
+    group_dir: Path,
+    relative_dir: str,
+    default_id: str,
+    default_title: str,
+    default_description: str | None,
+) -> dict | None:
+    """Write a group's library.json and return the groups.json entry.
+
+    `relative_dir` is the group's directory path relative to the site root,
+    e.g. ""              for the legacy top-level group,
+         "groups/jazz"   for a nested group.
+    Returns None if the group has no playable files (so we don't surface
+    empty groups in the index).
+    """
+    scores_dir = group_dir / "scores"
+    if not scores_dir.is_dir():
+        return None
+    manifest = build_group_manifest(scores_dir)
+    if manifest["count"] == 0:
+        return None
+
+    library_path = group_dir / "library.json"
+    library_path.write_text(
+        json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+    meta = _load_meta(group_dir / "meta.json")
+    rel = relative_dir.strip("/")
+    library_url = f"{rel}/library.json" if rel else "library.json"
+    return {
+        "id": meta.get("id", default_id),
+        "title": meta.get("title", default_title),
+        "description": meta.get("description", default_description),
+        "url": library_url,
+        "count": manifest["count"],
+        "total_size_bytes": manifest["total_size_bytes"],
+    }
+
+
+def discover_groups(site_dir: Path) -> list[dict]:
+    """Discover every group under `site_dir/groups/` and emit per-group manifests.
+
+    Returns the list of group descriptors for `groups.json`.
+    """
+    groups: list[dict] = []
+
+    groups_root = site_dir / "groups"
+    if groups_root.is_dir():
+        for sub in sorted(p for p in groups_root.iterdir() if p.is_dir()):
+            descriptor = emit_group(
+                group_dir=sub,
+                relative_dir=f"groups/{sub.name}",
+                default_id=slugify(sub.name),
+                default_title=humanize_title(sub.name),
+                default_description=None,
+            )
+            if descriptor is not None:
+                groups.append(descriptor)
+
+    return groups
+
+
+def build_groups_index(groups: list[dict]) -> dict:
+    return {
+        "schema": 1,
+        "generated_at": now_utc_iso(),
+        "count": len(groups),
+        "total_size_bytes": sum(int(g.get("total_size_bytes", 0)) for g in groups),
+        "groups": groups,
+    }
+
+
+# --------------------------------------------------------------------------
+# index.html
+# --------------------------------------------------------------------------
+
+def render_index_html(index: dict) -> str:
+    groups = index.get("groups", [])
+    total = index.get("total_size_bytes", 0)
+    generated = index.get("generated_at", "")
     rows: list[str] = []
-    for it in items:
-        size_kb = max(1, int(it.get("size_bytes", 0)) // 1024)
-        href = html.escape(it["path"])
-        title = html.escape(it["title"])
-        filename = html.escape(it["filename"])
+    for g in groups:
+        size_mb = (g.get("total_size_bytes", 0) or 0) / (1024 * 1024)
+        count = g.get("count", 0)
+        href = html.escape(g["url"])
+        title = html.escape(g["title"])
+        desc = html.escape(g.get("description") or "")
         rows.append(
-            f"        <tr>"
-            f"<td><a href='{href}'>{title}</a></td>"
-            f"<td class='mono'>{filename}</td>"
-            f"<td class='num'>{size_kb}&nbsp;KB</td>"
-            f"</tr>"
+            "        <tr>"
+            f"<td><a href='{href}'>{title}</a><br>"
+            f"<small class='muted'>{desc}</small></td>"
+            f"<td class='num'>{count}</td>"
+            f"<td class='num'>{size_mb:.2f}&nbsp;MB</td>"
+            "</tr>"
         )
     rows_html = "\n".join(rows) if rows else (
-        "        <tr><td colspan='3'><em>No scores uploaded yet — drop "
-        "<code>.mxl</code> files into <code>online-library/public/scores/</code>"
-        " on GitHub and the deploy workflow will pick them up automatically.</em>"
-        "</td></tr>"
+        "        <tr><td colspan='3'><em>No groups yet. Create a new group "
+        "under <code>online-library/public/groups/&lt;name&gt;/scores/</code> "
+        "and the deploy workflow will pick it up automatically.</em></td></tr>"
     )
     total_mb = total / (1024 * 1024) if total else 0
     return f"""<!doctype html>
@@ -138,9 +253,10 @@ def render_index_html(manifest: dict) -> str:
     code, .mono {{ font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
                    font-size: .9em; }}
     table {{ width: 100%; border-collapse: collapse; }}
-    th, td {{ text-align: left; padding: .35rem .5rem;
-              border-bottom: 1px solid rgba(127,127,127,.2); }}
-    td.num {{ text-align: right; white-space: nowrap; }}
+    th, td {{ text-align: left; padding: .5rem .5rem;
+              border-bottom: 1px solid rgba(127,127,127,.2); vertical-align: top; }}
+    td.num, th.num {{ text-align: right; white-space: nowrap; }}
+    .muted {{ color: #6a737d; }}
     a {{ color: #0969da; text-decoration: none; }}
     a:hover {{ text-decoration: underline; }}
   </style>
@@ -148,7 +264,7 @@ def render_index_html(manifest: dict) -> str:
 <body>
   <h1>ScoreReader online library</h1>
   <p class='meta'>
-    {len(items)} score{'s' if len(items) != 1 else ''}
+    {len(groups)} group{'s' if len(groups) != 1 else ''}
     &middot; {total_mb:.2f}&nbsp;MB total
     &middot; generated {html.escape(generated)}
   </p>
@@ -158,13 +274,13 @@ def render_index_html(manifest: dict) -> str:
     <code id='manifest-url'></code>
     <script>
       document.getElementById('manifest-url').textContent =
-        new URL('library.json', window.location.href).href;
+        new URL('groups.json', window.location.href).href;
     </script>
   </div>
 
   <table>
     <thead>
-      <tr><th>Title</th><th>File</th><th class='num'>Size</th></tr>
+      <tr><th>Group</th><th class='num'>Scores</th><th class='num'>Size</th></tr>
     </thead>
     <tbody>
 {rows_html}
@@ -172,42 +288,48 @@ def render_index_html(manifest: dict) -> str:
   </table>
 
   <p class='meta' style='margin-top:2rem'>
-    Manifest: <a href='library.json'>library.json</a>
+    Manifests:
+    <a href='groups.json'>groups.json</a>
   </p>
 </body>
 </html>
 """
 
 
+# --------------------------------------------------------------------------
+# Entry point
+# --------------------------------------------------------------------------
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument(
         "--site-dir",
         default="online-library/public",
-        help="Path to the deployable site directory (must contain scores/).",
+        help="Path to the deployable site directory.",
     )
     args = p.parse_args()
 
     site_dir = Path(args.site_dir).resolve()
-    scores_dir = site_dir / "scores"
-    scores_dir.mkdir(parents=True, exist_ok=True)
+    site_dir.mkdir(parents=True, exist_ok=True)
 
-    entries = discover_scores(scores_dir)
-    manifest = build_manifest(entries)
+    groups = discover_groups(site_dir)
+    index = build_groups_index(groups)
 
-    manifest_path = site_dir / "library.json"
+    groups_path = site_dir / "groups.json"
     index_path = site_dir / "index.html"
 
-    manifest_path.write_text(
-        json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
+    groups_path.write_text(
+        json.dumps(index, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
-    index_path.write_text(render_index_html(manifest), encoding="utf-8")
+    index_path.write_text(render_index_html(index), encoding="utf-8")
 
     print(
-        f"Wrote {manifest_path} ({manifest['count']} entries, "
-        f"{manifest['total_size_bytes']} bytes)."
+        f"Wrote {groups_path} ({index['count']} groups, "
+        f"{index['total_size_bytes']} bytes)."
     )
+    for g in groups:
+        print(f"  - {g['id']}: {g['count']} scores @ {g['url']}")
     print(f"Wrote {index_path}.")
     return 0
 

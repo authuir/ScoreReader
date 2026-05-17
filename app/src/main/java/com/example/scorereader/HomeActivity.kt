@@ -28,15 +28,24 @@ class HomeActivity : AppCompatActivity() {
 
     private enum class HomeTab { RECENT, FAVORITE, ONLINE }
 
+    /** What the Online tab is currently showing. */
+    private enum class OnlineMode { GROUPS, SCORES }
+
     private lateinit var binding: ActivityHomeBinding
     private lateinit var recents: RecentsRepository
     private lateinit var adapter: RecentsAdapter
     private lateinit var settings: AppSettings
     private lateinit var onlineRepo: OnlineLibraryRepository
     private lateinit var onlineAdapter: OnlineAdapter
+    private lateinit var groupsRepo: OnlineGroupSubscriptionsRepository
+    private lateinit var groupAdapter: OnlineGroupAdapter
     private var selectedTab: HomeTab = HomeTab.RECENT
+    private var onlineMode: OnlineMode = OnlineMode.GROUPS
     private var onlineLibrary: OnlineLibrary? = null
+    private var currentGroup: OnlineGroup? = null
+    private var onlineGroupIndex: OnlineGroupIndex? = null
     private var onlineLoadJob: kotlinx.coroutines.Job? = null
+    private var groupsLoadJob: kotlinx.coroutines.Job? = null
     private var openOnlineJob: kotlinx.coroutines.Job? = null
 
     private val openDocumentLauncher = registerForActivityResult(
@@ -66,6 +75,7 @@ class HomeActivity : AppCompatActivity() {
         recents = RecentsRepository(this)
         settings = AppSettings(this)
         onlineRepo = OnlineLibraryRepository(this)
+        groupsRepo = OnlineGroupSubscriptionsRepository(this)
         adapter = RecentsAdapter(
             emptyList(),
             onOpen = { item -> openRecent(item) },
@@ -75,6 +85,11 @@ class HomeActivity : AppCompatActivity() {
             emptyList(),
             onOpen = { item -> openOnline(item) },
             onToggleFavorite = { row -> toggleFavoriteOnline(row) }
+        )
+        groupAdapter = OnlineGroupAdapter(
+            emptyList(),
+            onOpen = { group -> openOnlineGroup(group) },
+            onLongPress = { group -> onGroupLongPress(group) }
         )
 
         val columns = resources.displayMetrics.widthPixels.let { w ->
@@ -90,6 +105,7 @@ class HomeActivity : AppCompatActivity() {
         binding.btnSettings.setOnClickListener {
             startActivity(Intent(this, SettingsActivity::class.java))
         }
+        binding.btnAddGroup.setOnClickListener { showAddGroupDialog() }
     }
 
     override fun onResume() {
@@ -105,23 +121,14 @@ class HomeActivity : AppCompatActivity() {
             HomeTab.ONLINE -> emptyList()
         }
 
+        // The "+" button only makes sense when picking groups under Online.
+        val showAddGroup = (selectedTab == HomeTab.ONLINE && onlineMode == OnlineMode.GROUPS)
+        binding.addGroupContainer.visibility = if (showAddGroup) View.VISIBLE else View.GONE
+
         if (selectedTab == HomeTab.ONLINE) {
-            binding.recyclerRecents.adapter = onlineAdapter
-            val cached = onlineLibrary
-            if (cached != null) {
-                onlineAdapter.submit(buildOnlineRows(cached))
-                val showEmpty = cached.items.isEmpty()
-                binding.emptyState.text =
-                    if (showEmpty) getString(R.string.empty_online_loaded)
-                    else getString(R.string.empty_online)
-                binding.emptyState.visibility = if (showEmpty) View.VISIBLE else View.GONE
-                binding.recyclerRecents.visibility = if (showEmpty) View.GONE else View.VISIBLE
-            } else {
-                onlineAdapter.submit(emptyList())
-                binding.emptyState.text = getString(R.string.empty_online_loading)
-                binding.emptyState.visibility = View.VISIBLE
-                binding.recyclerRecents.visibility = View.GONE
-                loadOnlineLibrary()
+            when (onlineMode) {
+                OnlineMode.GROUPS -> renderGroupsView()
+                OnlineMode.SCORES -> renderScoresView()
             }
             return
         }
@@ -138,14 +145,102 @@ class HomeActivity : AppCompatActivity() {
         binding.recyclerRecents.visibility = if (filtered.isEmpty()) View.GONE else View.VISIBLE
     }
 
-    private fun loadOnlineLibrary() {
+    /** GROUPS mode: show the merged list of server + local groups. */
+    private fun renderGroupsView() {
+        binding.recyclerRecents.adapter = groupAdapter
+        val groups = mergedGroups()
+        groupAdapter.submit(groups)
+        val hasServerData = onlineGroupIndex != null
+        val showEmpty = groups.isEmpty()
+        binding.emptyState.text = when {
+            !hasServerData -> getString(R.string.empty_online_groups_loading)
+            showEmpty -> getString(R.string.empty_online_groups)
+            else -> ""
+        }
+        binding.emptyState.visibility = if (showEmpty) View.VISIBLE else View.GONE
+        binding.recyclerRecents.visibility = if (showEmpty) View.GONE else View.VISIBLE
+        if (!hasServerData) loadOnlineGroups()
+    }
+
+    /** SCORES mode: show the scores for `currentGroup`. */
+    private fun renderScoresView() {
+        binding.recyclerRecents.adapter = onlineAdapter
+        val cached = onlineLibrary
+        if (cached != null) {
+            onlineAdapter.submit(buildOnlineRows(cached))
+            val showEmpty = cached.items.isEmpty()
+            binding.emptyState.text =
+                if (showEmpty) getString(R.string.empty_online_loaded)
+                else getString(R.string.empty_online)
+            binding.emptyState.visibility = if (showEmpty) View.VISIBLE else View.GONE
+            binding.recyclerRecents.visibility = if (showEmpty) View.GONE else View.VISIBLE
+        } else {
+            onlineAdapter.submit(emptyList())
+            binding.emptyState.text = getString(R.string.empty_online_loading)
+            binding.emptyState.visibility = View.VISIBLE
+            binding.recyclerRecents.visibility = View.GONE
+            val group = currentGroup
+            if (group != null) loadOnlineLibrary(group.manifestUrl)
+        }
+    }
+
+    /** Server groups first (server-defined order), then user-added groups
+     *  not already present at the same URL. */
+    private fun mergedGroups(): List<OnlineGroup> {
+        val server = onlineGroupIndex?.groups.orEmpty()
+        val seen = HashSet<String>().apply { addAll(server.map { it.manifestUrl }) }
+        val local = groupsRepo.listLocal().filter { seen.add(it.manifestUrl) }
+        return server + local
+    }
+
+    /** Fetches the configured root URL (groups.json). */
+    private fun loadOnlineGroups() {
         val url = settings.onlineLibraryUrl
+        groupsLoadJob?.cancel()
+        groupsLoadJob = lifecycleScope.launch {
+            val result = runCatching {
+                withContext(Dispatchers.IO) { onlineRepo.fetchGroups(url) }
+            }
+            if (selectedTab != HomeTab.ONLINE || onlineMode != OnlineMode.GROUPS) return@launch
+            result.onSuccess { index ->
+                onlineGroupIndex = index
+                val groups = mergedGroups()
+                groupAdapter.submit(groups)
+                val showEmpty = groups.isEmpty()
+                binding.emptyState.text = if (showEmpty)
+                    getString(R.string.empty_online_groups)
+                else ""
+                binding.emptyState.visibility = if (showEmpty) View.VISIBLE else View.GONE
+                binding.recyclerRecents.visibility = if (showEmpty) View.GONE else View.VISIBLE
+            }.onFailure { e ->
+                Log.w(TAG, "Failed to load online groups $url", e)
+                // Even if the server is unreachable, surface the user's
+                // local groups so they aren't locked out of their own
+                // subscriptions.
+                val groups = groupsRepo.listLocal()
+                groupAdapter.submit(groups)
+                if (groups.isEmpty()) {
+                    binding.emptyState.text = getString(
+                        R.string.err_online_load,
+                        e.message ?: e.javaClass.simpleName
+                    )
+                    binding.emptyState.visibility = View.VISIBLE
+                    binding.recyclerRecents.visibility = View.GONE
+                } else {
+                    binding.emptyState.visibility = View.GONE
+                    binding.recyclerRecents.visibility = View.VISIBLE
+                }
+            }
+        }
+    }
+
+    private fun loadOnlineLibrary(manifestUrl: String) {
         onlineLoadJob?.cancel()
         onlineLoadJob = lifecycleScope.launch {
             val result = runCatching {
-                withContext(Dispatchers.IO) { onlineRepo.fetch(url) }
+                withContext(Dispatchers.IO) { onlineRepo.fetch(manifestUrl) }
             }
-            if (selectedTab != HomeTab.ONLINE) return@launch
+            if (selectedTab != HomeTab.ONLINE || onlineMode != OnlineMode.SCORES) return@launch
             result.onSuccess { lib ->
                 onlineLibrary = lib
                 onlineAdapter.submit(buildOnlineRows(lib))
@@ -156,13 +251,93 @@ class HomeActivity : AppCompatActivity() {
                 binding.emptyState.visibility = if (showEmpty) View.VISIBLE else View.GONE
                 binding.recyclerRecents.visibility = if (showEmpty) View.GONE else View.VISIBLE
             }.onFailure { e ->
-                Log.w(TAG, "Failed to load online library $url", e)
+                Log.w(TAG, "Failed to load online library $manifestUrl", e)
                 binding.emptyState.text =
                     getString(R.string.err_online_load, e.message ?: e.javaClass.simpleName)
                 binding.emptyState.visibility = View.VISIBLE
                 binding.recyclerRecents.visibility = View.GONE
             }
         }
+    }
+
+    private fun openOnlineGroup(group: OnlineGroup) {
+        currentGroup = group
+        onlineMode = OnlineMode.SCORES
+        onlineLibrary = null
+        refreshRecents()
+    }
+
+    private fun onGroupLongPress(group: OnlineGroup) {
+        if (!group.isLocal) {
+            Toast.makeText(this, R.string.msg_group_remove_server, Toast.LENGTH_LONG).show()
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.dialog_remove_group_title)
+            .setMessage(getString(R.string.dialog_remove_group_message, group.title))
+            .setPositiveButton(R.string.action_remove) { _, _ ->
+                groupsRepo.removeLocal(group.id)
+                Toast.makeText(
+                    this,
+                    getString(R.string.msg_group_removed, group.title),
+                    Toast.LENGTH_SHORT
+                ).show()
+                groupAdapter.submit(mergedGroups())
+                refreshRecents()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun showAddGroupDialog() {
+        val padding = (resources.displayMetrics.density * 16).toInt()
+        val container = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(padding, padding / 2, padding, 0)
+        }
+        val nameInput = android.widget.EditText(this).apply {
+            hint = getString(R.string.add_group_name_hint)
+            inputType = android.text.InputType.TYPE_CLASS_TEXT
+        }
+        val urlInput = android.widget.EditText(this).apply {
+            hint = getString(R.string.add_group_url_hint)
+            inputType = android.text.InputType.TYPE_TEXT_VARIATION_URI
+        }
+        container.addView(nameInput)
+        container.addView(urlInput)
+        AlertDialog.Builder(this)
+            .setTitle(R.string.add_group_title)
+            .setView(container)
+            .setPositiveButton(android.R.string.ok) { _, _ ->
+                val name = nameInput.text?.toString()?.trim().orEmpty()
+                val url = urlInput.text?.toString()?.trim().orEmpty()
+                if (url.isEmpty()) return@setPositiveButton
+                val group = groupsRepo.addLocal(name, url)
+                Toast.makeText(
+                    this,
+                    getString(R.string.msg_group_added, group.title),
+                    Toast.LENGTH_SHORT
+                ).show()
+                groupAdapter.submit(mergedGroups())
+                refreshRecents()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    /** Back key: if we're inside a group's scores list, pop back to the
+     *  group list instead of leaving Home. */
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        if (selectedTab == HomeTab.ONLINE && onlineMode == OnlineMode.SCORES) {
+            onlineMode = OnlineMode.GROUPS
+            currentGroup = null
+            onlineLibrary = null
+            refreshRecents()
+            return
+        }
+        @Suppress("DEPRECATION")
+        super.onBackPressed()
     }
 
     private fun openOnline(item: OnlineItem) {
@@ -244,6 +419,14 @@ class HomeActivity : AppCompatActivity() {
                     1 -> HomeTab.FAVORITE
                     2 -> HomeTab.ONLINE
                     else -> HomeTab.RECENT
+                }
+                // Switching to / re-entering Online always starts at the
+                // group list — drilling into a group is intentionally a
+                // single-screen affair.
+                if (selectedTab == HomeTab.ONLINE) {
+                    onlineMode = OnlineMode.GROUPS
+                    currentGroup = null
+                    onlineLibrary = null
                 }
                 refreshRecents()
             }

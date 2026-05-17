@@ -40,8 +40,8 @@
     <string name="settings_section_storage">Storage</string>
     <string name="settings_scan_storage">Scan device for scores</string>
     <string name="settings_section_online">Online library</string>
-    <string name="settings_online_url_label">Manifest URL (library.json)</string>
-    <string name="settings_online_url_hint">http://&lt;host&gt;:8081/library.json</string>
+    <string name="settings_online_url_label">Root endpoint URL (groups.json)</string>
+    <string name="settings_online_url_hint">http://&lt;host&gt;:8081/groups.json</string>
     <string name="home_title">Authuir Score Reader</string>
     <string name="tab_recent">Recent</string>
     <string name="tab_favorite">Favorite</string>
@@ -56,4 +56,21 @@
     <string name="online_card_badge_cached">Cached</string>
     <string name="online_card_subtitle_cached">%1$s · Cached</string>
     <string name="msg_online_favorite_needs_cache">Open the score once to cache it, then favorite.</string>
+
+    <!-- Online groups (two-level browser inside the Online tab) -->
+    <string name="cd_add_group">Add online group</string>
+    <string name="online_group_badge_local">Local</string>
+    <string name="online_group_badge_server">Server</string>
+    <string name="online_group_score_count">%1$d scores</string>
+    <string name="empty_online_groups">No online groups yet.\nPress “+” to add one or check the configured URL in Settings.</string>
+    <string name="empty_online_groups_loading">Loading online groups…</string>
+    <string name="add_group_title">Add online group</string>
+    <string name="add_group_name_hint">Display name (e.g. “Jazz”)</string>
+    <string name="add_group_url_hint">library.json URL</string>
+    <string name="msg_group_added">Added group “%1$s”</string>
+    <string name="msg_group_removed">Removed group “%1$s”</string>
+    <string name="msg_group_remove_server">Server-provided group; remove the entry from the server\'s groups.json or change the root URL in Settings.</string>
+    <string name="dialog_remove_group_title">Remove group?</string>
+    <string name="dialog_remove_group_message">Remove “%1$s” from your local list? The scores already downloaded into the cache are kept.</string>
+    <string name="action_remove">Remove</string>
 </resources>
