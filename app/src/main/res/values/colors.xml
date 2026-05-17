@@ -1,6 +1,19 @@
 <resources>
+    <!-- Legacy keys (kept for the WebView viewer chrome). -->
     <color name="bg">#FFFFFFFF</color>
     <color name="toolbar_bg">#FF222222</color>
     <color name="toolbar_text">#FFFFFFFF</color>
     <color name="accent">#FF4CAF50</color>
+
+    <!-- Day/Night palette for the home screen, settings and recent cards.
+         The values here are the LIGHT-mode colours; values-night/colors.xml
+         provides the dark-mode overrides. -->
+    <color name="home_background">#FFFAFAFA</color>
+    <color name="card_surface">#FFFFFFFF</color>
+    <color name="card_surface_focused">#FFD7F0DA</color>
+    <color name="card_surface_pressed">#FFB7E1BC</color>
+    <color name="text_primary">#FF111111</color>
+    <color name="text_secondary">#FF555555</color>
+    <color name="text_tertiary">#FF7A7A7A</color>
+    <color name="divider">#FFD8D8D8</color>
 </resources>

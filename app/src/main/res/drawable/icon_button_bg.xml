@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Selector used as the background for the home-screen icon buttons.
+    Gives them a real focused/pressed state on DPAD (filled accent circle)
+    that's easy to see from across the room.
+-->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <item android:state_pressed="true">
+        <shape android:shape="oval">
+            <solid android:color="@color/accent" />
+        </shape>
+    </item>
+
+    <item android:state_focused="true">
+        <shape android:shape="oval">
+            <solid android:color="@color/accent" />
+        </shape>
+    </item>
+
+    <item>
+        <shape android:shape="oval">
+            <solid android:color="@android:color/transparent" />
+            <stroke android:width="1dp" android:color="@color/divider" />
+        </shape>
+    </item>
+
+</selector>

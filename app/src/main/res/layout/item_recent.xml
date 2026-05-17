@@ -8,11 +8,11 @@
     android:layout_margin="6dp"
     android:focusable="true"
     android:clickable="true"
-    android:foreground="?attr/selectableItemBackground"
-    app:cardBackgroundColor="#FF1F1F1F"
+    android:foreground="@drawable/card_recent_foreground"
+    android:stateListAnimator="@animator/card_recent_elevation"
+    app:cardBackgroundColor="@color/card_recent_background"
     app:cardCornerRadius="8dp"
     app:cardElevation="2dp"
-    app:strokeColor="@color/accent"
     app:strokeWidth="0dp">
 
     <LinearLayout
@@ -22,12 +22,23 @@
         android:padding="12dp">
 
         <TextView
+            android:id="@+id/favoriteIcon"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="end"
+            android:text="♡"
+            android:textColor="@color/text_tertiary"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            tools:text="♥" />
+
+        <TextView
             android:id="@+id/recentTitle"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:singleLine="true"
             android:ellipsize="middle"
-            android:textColor="@color/toolbar_text"
+            android:textColor="@color/text_primary"
             android:textSize="16sp"
             android:textStyle="bold"
             tools:text="My Score" />
@@ -39,7 +50,7 @@
             android:layout_marginTop="4dp"
             android:singleLine="true"
             android:ellipsize="middle"
-            android:textColor="#FFAAAAAA"
+            android:textColor="@color/text_secondary"
             android:textSize="12sp"
             tools:text="content://..." />
 

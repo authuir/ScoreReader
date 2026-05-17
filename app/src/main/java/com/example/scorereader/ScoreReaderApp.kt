@@ -2,6 +2,7 @@ package com.example.scorereader
 
 import android.app.Application
 import android.webkit.WebView
+import androidx.appcompat.app.AppCompatDelegate
 
 class ScoreReaderApp : Application() {
 
@@ -10,6 +11,14 @@ class ScoreReaderApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // Apply the user's dark-mode preference before any activity inflates
+        // its layout so we don't briefly flash the wrong theme.
+        val settings = AppSettings(this)
+        AppCompatDelegate.setDefaultNightMode(
+            if (settings.darkMode) AppCompatDelegate.MODE_NIGHT_YES
+            else AppCompatDelegate.MODE_NIGHT_NO
+        )
+
         // Enable WebView debugging in debug builds so chrome://inspect works.
         if (0 != applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) {
             WebView.setWebContentsDebuggingEnabled(true)

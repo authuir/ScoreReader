@@ -1,0 +1,164 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/home_background">
+
+    <LinearLayout
+        android:id="@+id/topBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:padding="16dp"
+        android:gravity="center_vertical"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/title_settings"
+            android:textColor="@color/text_primary"
+            android:textSize="24sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:fillViewport="true"
+        android:paddingStart="20dp"
+        android:paddingEnd="20dp"
+        android:paddingBottom="24dp"
+        android:clipToPadding="false"
+        app:layout_constraintTop_toBottomOf="@id/topBar"
+        app:layout_constraintBottom_toBottomOf="parent">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <!-- Engine -->
+            <TextView
+                style="@style/SettingsSection"
+                android:text="@string/settings_section_engine" />
+
+            <RadioGroup
+                android:id="@+id/groupEngine"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <RadioButton
+                    android:id="@+id/radioEngineWebview"
+                    style="@style/SettingsRadio"
+                    android:text="@string/settings_engine_webview" />
+
+                <RadioButton
+                    android:id="@+id/radioEngineVerovio"
+                    style="@style/SettingsRadio"
+                    android:text="@string/settings_engine_verovio" />
+            </RadioGroup>
+
+            <View style="@style/SettingsDivider" />
+
+            <!-- Zoom -->
+            <TextView
+                style="@style/SettingsSection"
+                android:text="@string/settings_section_zoom" />
+
+            <TextView
+                android:id="@+id/labelWebviewZoom"
+                style="@style/SettingsValueLabel"
+                tools:text="WebView (OSMD): 60%" />
+
+            <SeekBar
+                android:id="@+id/seekWebviewZoom"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:max="225"
+                android:focusable="true"
+                android:nextFocusUp="@+id/radioEngineVerovio"
+                android:nextFocusDown="@+id/seekVerovioScale" />
+
+            <TextView
+                android:id="@+id/labelVerovioScale"
+                style="@style/SettingsValueLabel"
+                android:layout_marginTop="16dp"
+                tools:text="Verovio scale: 40%" />
+
+            <SeekBar
+                android:id="@+id/seekVerovioScale"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:max="60"
+                android:focusable="true"
+                android:nextFocusUp="@+id/seekWebviewZoom"
+                android:nextFocusDown="@+id/switchDarkMode" />
+
+            <View style="@style/SettingsDivider" />
+
+            <!-- Display -->
+            <TextView
+                style="@style/SettingsSection"
+                android:text="@string/settings_section_display" />
+
+            <androidx.appcompat.widget.SwitchCompat
+                android:id="@+id/switchDarkMode"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingTop="8dp"
+                android:paddingBottom="8dp"
+                android:text="@string/settings_dark_mode"
+                android:textColor="@color/text_primary"
+                android:textSize="16sp"
+                android:focusable="true" />
+
+            <View style="@style/SettingsDivider" />
+
+            <!-- Storage -->
+            <TextView
+                style="@style/SettingsSection"
+                android:text="@string/settings_section_storage" />
+
+            <Button
+                android:id="@+id/btnScanStorage"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:layout_marginBottom="24dp"
+                android:text="@string/settings_scan_storage" />
+
+            <View style="@style/SettingsDivider" />
+
+            <!-- Online library -->
+            <TextView
+                style="@style/SettingsSection"
+                android:text="@string/settings_section_online" />
+
+            <TextView
+                style="@style/SettingsValueLabel"
+                android:text="@string/settings_online_url_label" />
+
+            <EditText
+                android:id="@+id/editOnlineUrl"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:layout_marginBottom="24dp"
+                android:inputType="textUri"
+                android:singleLine="true"
+                android:importantForAutofill="no"
+                android:hint="@string/settings_online_url_hint"
+                android:textColor="@color/text_primary"
+                android:textColorHint="@color/text_tertiary"
+                tools:text="http://192.168.0.10:8081/library.json" />
+
+        </LinearLayout>
+    </ScrollView>
+
+</androidx.constraintlayout.widget.ConstraintLayout>

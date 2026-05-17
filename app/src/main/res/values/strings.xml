@@ -17,9 +17,43 @@
     <string name="msg_scanning">Scanning storage…</string>
     <string name="msg_no_files_found">No MusicXML (.xml / .musicxml / .mxl) files found under storage roots.</string>
     <string name="msg_recent_unreachable">That score is no longer reachable. Removed from history.</string>
+    <string name="msg_favorited">Added to favorites</string>
+    <string name="msg_unfavorited">Removed from favorites</string>
     <string name="err_load_failed">Failed to load score: %1$s</string>
 
     <!-- Engine toggle (HomeActivity) -->
     <string name="engine_webview">Engine: WebView</string>
     <string name="engine_verovio">Engine: Verovio (JNI)</string>
+
+    <!-- Settings screen -->
+    <string name="title_settings">Settings</string>
+    <string name="cd_open_score">Open Score</string>
+    <string name="cd_settings">Settings</string>
+    <string name="settings_section_engine">Rendering engine</string>
+    <string name="settings_engine_webview">WebView + OSMD</string>
+    <string name="settings_engine_verovio">Verovio (native C++)</string>
+    <string name="settings_section_zoom">Default zoom</string>
+    <string name="settings_zoom_webview_label">WebView (OSMD): %1$d%%</string>
+    <string name="settings_zoom_verovio_label">Verovio scale: %1$d%%</string>
+    <string name="settings_section_display">Display</string>
+    <string name="settings_dark_mode">Dark mode</string>
+    <string name="settings_section_storage">Storage</string>
+    <string name="settings_scan_storage">Scan device for scores</string>
+    <string name="settings_section_online">Online library</string>
+    <string name="settings_online_url_label">Manifest URL (library.json)</string>
+    <string name="settings_online_url_hint">http://&lt;host&gt;:8081/library.json</string>
+    <string name="home_title">Authuir Score Reader</string>
+    <string name="tab_recent">Recent</string>
+    <string name="tab_favorite">Favorite</string>
+    <string name="tab_online">Online</string>
+    <string name="empty_favorites">No favorite scores yet. Focus a card and long-press center key to favorite.</string>
+    <string name="empty_online">Online catalog is coming soon.</string>
+    <string name="empty_online_loading">Loading online library…</string>
+    <string name="empty_online_loaded">Online library is empty.</string>
+    <string name="err_online_load">Failed to load online library: %1$s</string>
+    <string name="err_online_download">Download failed: %1$s</string>
+    <string name="msg_downloading">Downloading %1$s…</string>
+    <string name="online_card_badge_cached">Cached</string>
+    <string name="online_card_subtitle_cached">%1$s · Cached</string>
+    <string name="msg_online_favorite_needs_cache">Open the score once to cache it, then favorite.</string>
 </resources>

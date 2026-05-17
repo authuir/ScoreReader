@@ -55,3 +55,9 @@ app/.cxx/
 
 # Local build logs (Tee-Object output from gradlew runs).
 build-*.log
+
+# Online library: keep tooling + library.json tracked, but don't commit the
+# third-party score binaries themselves. Re-run online-library/download_library.py
+# to regenerate the local mirror.
+online-library/scores/
+

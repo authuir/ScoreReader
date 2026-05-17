@@ -11,7 +11,8 @@ data class RecentScore(
     val uri: Uri,
     val displayName: String,
     val openedAtMs: Long,
-    val persistable: Boolean
+    val persistable: Boolean,
+    val isFavorite: Boolean = false
 )
 
 /**
@@ -43,7 +44,8 @@ class RecentsRepository(context: Context) {
                         uri.lastPathSegment ?: uri.toString()
                     },
                     openedAtMs = o.optLong("opened", 0L),
-                    persistable = o.optBoolean("persistable", false)
+                    persistable = o.optBoolean("persistable", false),
+                    isFavorite = o.optBoolean("favorite", false)
                 )
             }.sortedByDescending { it.openedAtMs }
         }.getOrElse { emptyList() }
@@ -61,11 +63,31 @@ class RecentsRepository(context: Context) {
                 uri = uri,
                 displayName = (displayName ?: uri.lastPathSegment ?: uriStr).take(160),
                 openedAtMs = now,
-                persistable = persistable
+                persistable = persistable,
+                isFavorite = current.firstOrNull { it.uri.toString() == uriStr }?.isFavorite ?: false
             )
         )
         val trimmed = current.take(MAX_ENTRIES)
         save(trimmed)
+    }
+
+    fun setFavorite(uri: Uri, favorite: Boolean) {
+        val uriStr = uri.toString()
+        val updated = list().map {
+            if (it.uri.toString() == uriStr) it.copy(isFavorite = favorite) else it
+        }
+        save(updated)
+    }
+
+    fun toggleFavorite(uri: Uri): Boolean {
+        val uriStr = uri.toString()
+        val items = list().toMutableList()
+        val idx = items.indexOfFirst { it.uri.toString() == uriStr }
+        if (idx < 0) return false
+        val next = !items[idx].isFavorite
+        items[idx] = items[idx].copy(isFavorite = next)
+        save(items)
+        return next
     }
 
     fun remove(uri: Uri) {
@@ -86,6 +108,7 @@ class RecentsRepository(context: Context) {
             o.put("name", it.displayName)
             o.put("opened", it.openedAtMs)
             o.put("persistable", it.persistable)
+            o.put("favorite", it.isFavorite)
             arr.put(o)
         }
         prefs.edit().putString(KEY_RECENTS, arr.toString()).apply()

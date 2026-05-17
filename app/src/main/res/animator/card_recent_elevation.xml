@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Lift the card when it receives DPAD focus or is pressed so the
+    selection state is reinforced by a shadow change, not only the border.
+-->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <item android:state_pressed="true">
+        <objectAnimator
+            android:propertyName="translationZ"
+            android:valueTo="6dp"
+            android:valueType="floatType"
+            android:duration="120" />
+    </item>
+
+    <item android:state_focused="true">
+        <objectAnimator
+            android:propertyName="translationZ"
+            android:valueTo="6dp"
+            android:valueType="floatType"
+            android:duration="120" />
+    </item>
+
+    <item>
+        <objectAnimator
+            android:propertyName="translationZ"
+            android:valueTo="0dp"
+            android:valueType="floatType"
+            android:duration="120" />
+    </item>
+
+</selector>

@@ -1,9 +1,11 @@
 package com.example.scorereader
 
 import android.content.Intent
+import android.content.res.AssetManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Typeface
 import android.net.Uri
 import android.os.Bundle
 import android.util.Base64
@@ -15,6 +17,7 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.caverock.androidsvg.SVG
+import com.caverock.androidsvg.SVGExternalFileResolver
 import com.example.scorereader.databinding.ActivityVerovioBinding
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -40,6 +43,7 @@ class VerovioMainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityVerovioBinding
     private lateinit var recents: RecentsRepository
     private lateinit var extractor: VerovioResourceExtractor
+    private lateinit var settings: AppSettings
 
     /** Verovio toolkit handle. 0L = uninitialized / destroyed. */
     private var toolkit: Long = 0L
@@ -50,6 +54,9 @@ class VerovioMainActivity : AppCompatActivity() {
     private var currentUri: Uri? = null
     private var currentDisplayName: String? = null
     private var renderJobToken: Long = 0L
+    /** Last `verovioScale` value we actually rendered. Used by `onResume` to
+     *  detect Settings changes and trigger a fresh render. */
+    private var lastAppliedScale: Int = -1
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -58,7 +65,9 @@ class VerovioMainActivity : AppCompatActivity() {
 
         recents = RecentsRepository(this)
         extractor = VerovioResourceExtractor(this)
+        settings = AppSettings(this)
         applyFullscreenFlags()
+        registerSvgFontResolver(assets)
 
         handleIntent(intent)
     }
@@ -66,6 +75,19 @@ class VerovioMainActivity : AppCompatActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         handleIntent(intent)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Settings → Verovio scale slider may have changed while we were
+        // backgrounded. Re-run the open pipeline with the new scale so the
+        // change is visible immediately.
+        val uri = currentUri ?: return
+        val newScale = settings.verovioScale
+        if (toolkit != 0L && pageCount > 0 && newScale != lastAppliedScale) {
+            Log.i(TAG, "verovio scale changed $lastAppliedScale -> $newScale, re-rendering")
+            openInVerovio(uri)
+        }
     }
 
     override fun onDestroy() {
@@ -155,9 +177,12 @@ class VerovioMainActivity : AppCompatActivity() {
             VerovioNative.nativeEnableLog(true)
             toolkit = VerovioNative.nativeCreate(resourcePath)
             if (toolkit == 0L) error("Verovio toolkit init failed")
-            VerovioNative.nativeSetOptions(toolkit, buildPageOptions())
             Log.i(TAG, "Verovio version: ${VerovioNative.nativeGetVersion(toolkit)}")
         }
+        // Re-apply page options on every open so scale changes made in
+        // Settings (or display rotations) take effect on the next score.
+        VerovioNative.nativeSetOptions(toolkit, buildPageOptions())
+        lastAppliedScale = settings.verovioScale
         if (jobToken != renderJobToken) return null
 
         val tRead0 = System.currentTimeMillis()
@@ -214,6 +239,7 @@ class VerovioMainActivity : AppCompatActivity() {
         // staff size relative to the page.
         val pageWidth = 2400
         val pageHeight = ((pageWidth.toLong() * h) / w).toInt().coerceAtLeast(400)
+        val scale = settings.verovioScale
         return """
             {
               "pageWidth": $pageWidth,
@@ -222,7 +248,7 @@ class VerovioMainActivity : AppCompatActivity() {
               "pageMarginRight": 50,
               "pageMarginTop": 50,
               "pageMarginBottom": 50,
-              "scale": 40,
+              "scale": $scale,
               "adjustPageHeight": false,
               "breaks": "auto"
             }
@@ -353,5 +379,57 @@ class VerovioMainActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "ScoreReader/Verovio"
+
+        /** Loaded once per process — AndroidSVG's resolver is global. */
+        @Volatile
+        private var fontResolverRegistered: Boolean = false
+
+        /**
+         * Register a global [SVGExternalFileResolver] so that `<text>` elements
+         * in Verovio's SVG output (dynamics, expressions, tempo numbers, etc.)
+         * can resolve their `font-family` to real SMuFL typefaces bundled in
+         * the app's assets. Without this, AndroidSVG falls back to the default
+         * sans-serif font, which doesn't include the SMuFL private-use glyphs
+         * and renders them as empty boxes.
+         */
+        @Synchronized
+        fun registerSvgFontResolver(assets: AssetManager) {
+            if (fontResolverRegistered) return
+            val leland = runCatching { Typeface.createFromAsset(assets, "fonts/Leland.otf") }
+                .onFailure { Log.w(TAG, "Failed to load Leland.otf: ${it.message}") }.getOrNull()
+            val leipzig = runCatching { Typeface.createFromAsset(assets, "fonts/Leipzig.ttf") }
+                .onFailure { Log.w(TAG, "Failed to load Leipzig.ttf: ${it.message}") }.getOrNull()
+            val bravura = runCatching { Typeface.createFromAsset(assets, "fonts/Bravura.otf") }
+                .onFailure { Log.w(TAG, "Failed to load Bravura.otf: ${it.message}") }.getOrNull()
+
+            // Make a sensible fallback: any music font we have, prefer Leland.
+            val fallback = leland ?: bravura ?: leipzig
+
+            SVG.registerExternalFileResolver(object : SVGExternalFileResolver() {
+                override fun resolveFont(
+                    fontFamily: String?,
+                    fontWeight: Int,
+                    fontStyle: String?
+                ): Typeface? {
+                    if (fontFamily == null) return null
+                    return when {
+                        fontFamily.equals("Leland", ignoreCase = true) -> leland ?: fallback
+                        fontFamily.equals("Leipzig", ignoreCase = true) -> leipzig ?: fallback
+                        fontFamily.equals("Bravura", ignoreCase = true) -> bravura ?: fallback
+                        // Verovio also emits "VerovioText" and the SMuFL face
+                        // names for fallback chains; route those to whatever
+                        // music font we have so private-use glyphs resolve.
+                        fontFamily.contains("Verovio", ignoreCase = true) -> fallback
+                        else -> null
+                    }
+                }
+            })
+            fontResolverRegistered = true
+            Log.i(
+                TAG,
+                "SVG font resolver registered (leland=${leland != null}, " +
+                    "leipzig=${leipzig != null}, bravura=${bravura != null})"
+            )
+        }
     }
 }

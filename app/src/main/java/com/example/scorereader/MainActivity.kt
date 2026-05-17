@@ -30,6 +30,7 @@ class MainActivity : AppCompatActivity(), OsmdWebViewPool.ViewerCallbacks {
     private lateinit var binding: ActivityMainBinding
     private lateinit var recents: RecentsRepository
     private lateinit var pool: OsmdWebViewPool
+    private lateinit var settings: AppSettings
 
     private var currentBinding: OsmdWebViewPool.Binding? = null
     private var currentUri: Uri? = null
@@ -43,6 +44,7 @@ class MainActivity : AppCompatActivity(), OsmdWebViewPool.ViewerCallbacks {
 
         recents = RecentsRepository(this)
         pool = (application as ScoreReaderApp).webViewPool
+        settings = AppSettings(this)
 
         binding.toolbar.visibility = View.GONE
         applyFullscreenFlags()
@@ -143,6 +145,14 @@ class MainActivity : AppCompatActivity(), OsmdWebViewPool.ViewerCallbacks {
         val send: () -> Unit = {
             // If the user navigated away between IO and viewer-ready, skip.
             if (currentBinding === bind) {
+                // Push the user's default zoom *before* loading content so
+                // the first render is at the right size; viewer.js exposes
+                // `osmdViewer.setZoom`.
+                bind.webView.evaluateJavascript(
+                    "window.osmdViewer && window.osmdViewer.setZoom && " +
+                        "window.osmdViewer.setZoom(${settings.webViewZoom});",
+                    null
+                )
                 bind.webView.evaluateJavascript(
                     "window.osmdViewer.loadBase64('$b64');", null
                 )

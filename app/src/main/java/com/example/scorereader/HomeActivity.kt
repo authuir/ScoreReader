@@ -1,6 +1,5 @@
 package com.example.scorereader
 
-import android.Manifest
 import android.app.AlertDialog
 import android.content.ActivityNotFoundException
 import android.content.Context
@@ -13,12 +12,12 @@ import android.os.Environment
 import android.util.Log
 import android.view.View
 import android.widget.Toast
-import androidx.activity.result.contract.ActivityResultContract
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.GridLayoutManager
+import com.google.android.material.tabs.TabLayout
 import com.example.scorereader.databinding.ActivityHomeBinding
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -27,9 +26,18 @@ import java.io.File
 
 class HomeActivity : AppCompatActivity() {
 
+    private enum class HomeTab { RECENT, FAVORITE, ONLINE }
+
     private lateinit var binding: ActivityHomeBinding
     private lateinit var recents: RecentsRepository
     private lateinit var adapter: RecentsAdapter
+    private lateinit var settings: AppSettings
+    private lateinit var onlineRepo: OnlineLibraryRepository
+    private lateinit var onlineAdapter: OnlineAdapter
+    private var selectedTab: HomeTab = HomeTab.RECENT
+    private var onlineLibrary: OnlineLibrary? = null
+    private var onlineLoadJob: kotlinx.coroutines.Job? = null
+    private var openOnlineJob: kotlinx.coroutines.Job? = null
 
     private val openDocumentLauncher = registerForActivityResult(
         PersistableOpenDocument()
@@ -56,7 +64,18 @@ class HomeActivity : AppCompatActivity() {
         setContentView(binding.root)
 
         recents = RecentsRepository(this)
-        adapter = RecentsAdapter(emptyList()) { item -> openRecent(item) }
+        settings = AppSettings(this)
+        onlineRepo = OnlineLibraryRepository(this)
+        adapter = RecentsAdapter(
+            emptyList(),
+            onOpen = { item -> openRecent(item) },
+            onToggleFavorite = { item -> toggleFavorite(item) }
+        )
+        onlineAdapter = OnlineAdapter(
+            emptyList(),
+            onOpen = { item -> openOnline(item) },
+            onToggleFavorite = { row -> toggleFavoriteOnline(row) }
+        )
 
         val columns = resources.displayMetrics.widthPixels.let { w ->
             // ~360dp wide cards
@@ -65,13 +84,12 @@ class HomeActivity : AppCompatActivity() {
         }
         binding.recyclerRecents.layoutManager = GridLayoutManager(this, columns)
         binding.recyclerRecents.adapter = adapter
+        setupTabs()
 
         binding.btnOpen.setOnClickListener { pickFile() }
-        binding.btnScan.setOnClickListener {
-            ensureStoragePermissionThen { showBuiltinFileBrowser() }
+        binding.btnSettings.setOnClickListener {
+            startActivity(Intent(this, SettingsActivity::class.java))
         }
-        binding.btnEngine.setOnClickListener { toggleEngine() }
-        refreshEngineLabel()
     }
 
     override fun onResume() {
@@ -81,9 +99,168 @@ class HomeActivity : AppCompatActivity() {
 
     private fun refreshRecents() {
         val items = recents.list()
-        adapter.submit(items)
-        binding.emptyState.visibility = if (items.isEmpty()) View.VISIBLE else View.GONE
-        binding.recyclerRecents.visibility = if (items.isEmpty()) View.GONE else View.VISIBLE
+        val filtered = when (selectedTab) {
+            HomeTab.RECENT -> items
+            HomeTab.FAVORITE -> items.filter { it.isFavorite }
+            HomeTab.ONLINE -> emptyList()
+        }
+
+        if (selectedTab == HomeTab.ONLINE) {
+            binding.recyclerRecents.adapter = onlineAdapter
+            val cached = onlineLibrary
+            if (cached != null) {
+                onlineAdapter.submit(buildOnlineRows(cached))
+                val showEmpty = cached.items.isEmpty()
+                binding.emptyState.text =
+                    if (showEmpty) getString(R.string.empty_online_loaded)
+                    else getString(R.string.empty_online)
+                binding.emptyState.visibility = if (showEmpty) View.VISIBLE else View.GONE
+                binding.recyclerRecents.visibility = if (showEmpty) View.GONE else View.VISIBLE
+            } else {
+                onlineAdapter.submit(emptyList())
+                binding.emptyState.text = getString(R.string.empty_online_loading)
+                binding.emptyState.visibility = View.VISIBLE
+                binding.recyclerRecents.visibility = View.GONE
+                loadOnlineLibrary()
+            }
+            return
+        }
+
+        binding.recyclerRecents.adapter = adapter
+        adapter.submit(filtered)
+        val emptyText = when (selectedTab) {
+            HomeTab.RECENT -> getString(R.string.empty_recents)
+            HomeTab.FAVORITE -> getString(R.string.empty_favorites)
+            HomeTab.ONLINE -> getString(R.string.empty_online)
+        }
+        binding.emptyState.text = emptyText
+        binding.emptyState.visibility = if (filtered.isEmpty()) View.VISIBLE else View.GONE
+        binding.recyclerRecents.visibility = if (filtered.isEmpty()) View.GONE else View.VISIBLE
+    }
+
+    private fun loadOnlineLibrary() {
+        val url = settings.onlineLibraryUrl
+        onlineLoadJob?.cancel()
+        onlineLoadJob = lifecycleScope.launch {
+            val result = runCatching {
+                withContext(Dispatchers.IO) { onlineRepo.fetch(url) }
+            }
+            if (selectedTab != HomeTab.ONLINE) return@launch
+            result.onSuccess { lib ->
+                onlineLibrary = lib
+                onlineAdapter.submit(buildOnlineRows(lib))
+                val showEmpty = lib.items.isEmpty()
+                binding.emptyState.text =
+                    if (showEmpty) getString(R.string.empty_online_loaded)
+                    else getString(R.string.empty_online)
+                binding.emptyState.visibility = if (showEmpty) View.VISIBLE else View.GONE
+                binding.recyclerRecents.visibility = if (showEmpty) View.GONE else View.VISIBLE
+            }.onFailure { e ->
+                Log.w(TAG, "Failed to load online library $url", e)
+                binding.emptyState.text =
+                    getString(R.string.err_online_load, e.message ?: e.javaClass.simpleName)
+                binding.emptyState.visibility = View.VISIBLE
+                binding.recyclerRecents.visibility = View.GONE
+            }
+        }
+    }
+
+    private fun openOnline(item: OnlineItem) {
+        val lib = onlineLibrary ?: return
+        if (openOnlineJob?.isActive == true) return
+        // If we already have a verified local copy, skip the network and
+        // open straight away. Otherwise stream from the LAN server.
+        val cachedUri = onlineRepo.cachedUri(item)
+        if (cachedUri != null) {
+            recents.add(cachedUri, item.title, persistable = false)
+            startViewer(cachedUri, item.title)
+            return
+        }
+        Toast.makeText(this, getString(R.string.msg_downloading, item.title), Toast.LENGTH_SHORT)
+            .show()
+        openOnlineJob = lifecycleScope.launch {
+            val result = runCatching {
+                withContext(Dispatchers.IO) { onlineRepo.download(lib, item) }
+            }
+            result.onSuccess { uri ->
+                // Remember the download as a recent so the user can re-open
+                // without going back online.
+                recents.add(uri, item.title, persistable = false)
+                if (selectedTab == HomeTab.ONLINE) {
+                    onlineAdapter.submit(buildOnlineRows(lib))
+                }
+                startViewer(uri, item.title)
+            }.onFailure { e ->
+                Log.e(TAG, "Failed to download ${item.path}", e)
+                Toast.makeText(
+                    this@HomeActivity,
+                    getString(R.string.err_online_download, e.message ?: e.javaClass.simpleName),
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    }
+
+    private fun buildOnlineRows(lib: OnlineLibrary): List<OnlineRow> {
+        val recentByUri = recents.list().associateBy { it.uri.toString() }
+        return lib.items.map { item ->
+            val cachedUri = onlineRepo.cachedUri(item)
+            val cachedKey = cachedUri?.toString()
+            val fav = cachedKey?.let { recentByUri[it]?.isFavorite } ?: false
+            OnlineRow(item = item, isCached = cachedUri != null, isFavorite = fav)
+        }
+    }
+
+    private fun toggleFavoriteOnline(row: OnlineRow) {
+        val cachedUri = onlineRepo.cachedUri(row.item)
+        if (cachedUri == null) {
+            Toast.makeText(this, R.string.msg_online_favorite_needs_cache, Toast.LENGTH_SHORT)
+                .show()
+            return
+        }
+        // Make sure the cached file has a recent entry so favorite + Recent
+        // tab pick it up automatically.
+        if (recents.list().none { it.uri.toString() == cachedUri.toString() }) {
+            recents.add(cachedUri, row.item.title, persistable = false)
+        }
+        val nowFavorite = recents.toggleFavorite(cachedUri)
+        Toast.makeText(
+            this,
+            if (nowFavorite) R.string.msg_favorited else R.string.msg_unfavorited,
+            Toast.LENGTH_SHORT
+        ).show()
+        val lib = onlineLibrary
+        if (lib != null) onlineAdapter.submit(buildOnlineRows(lib))
+    }
+
+    private fun setupTabs() {
+        binding.homeTabs.removeAllTabs()
+        binding.homeTabs.addTab(binding.homeTabs.newTab().setText(R.string.tab_recent))
+        binding.homeTabs.addTab(binding.homeTabs.newTab().setText(R.string.tab_favorite))
+        binding.homeTabs.addTab(binding.homeTabs.newTab().setText(R.string.tab_online))
+        binding.homeTabs.addOnTabSelectedListener(object : TabLayout.OnTabSelectedListener {
+            override fun onTabSelected(tab: TabLayout.Tab) {
+                selectedTab = when (tab.position) {
+                    1 -> HomeTab.FAVORITE
+                    2 -> HomeTab.ONLINE
+                    else -> HomeTab.RECENT
+                }
+                refreshRecents()
+            }
+            override fun onTabUnselected(tab: TabLayout.Tab) = Unit
+            override fun onTabReselected(tab: TabLayout.Tab) = Unit
+        })
+        binding.homeTabs.getTabAt(0)?.select()
+    }
+
+    private fun toggleFavorite(item: RecentScore) {
+        val nowFavorite = recents.toggleFavorite(item.uri)
+        Toast.makeText(
+            this,
+            if (nowFavorite) R.string.msg_favorited else R.string.msg_unfavorited,
+            Toast.LENGTH_SHORT
+        ).show()
+        refreshRecents()
     }
 
     // ---------------------------------------------------------------------
@@ -101,7 +278,7 @@ class HomeActivity : AppCompatActivity() {
     }
 
     private fun startViewer(uri: Uri, displayName: String?) {
-        val targetClass = if (preferVerovio()) {
+        val targetClass = if (settings.preferVerovio) {
             VerovioMainActivity::class.java
         } else {
             MainActivity::class.java
@@ -113,33 +290,6 @@ class HomeActivity : AppCompatActivity() {
             if (displayName != null) putExtra(MainActivity.EXTRA_DISPLAY_NAME, displayName)
         }
         startActivity(intent)
-    }
-
-    // ---------------------------------------------------------------------
-    // Engine toggle (WebView vs Verovio)
-    // ---------------------------------------------------------------------
-
-    private fun engineSharedPrefs() =
-        getSharedPreferences("score_reader_engine", Context.MODE_PRIVATE)
-
-    private fun preferVerovio(): Boolean =
-        engineSharedPrefs().getString("engine", "webview") == "verovio"
-
-    private fun toggleEngine() {
-        val now = if (preferVerovio()) "webview" else "verovio"
-        engineSharedPrefs().edit().putString("engine", now).apply()
-        refreshEngineLabel()
-        Toast.makeText(
-            this,
-            getString(if (now == "verovio") R.string.engine_verovio else R.string.engine_webview),
-            Toast.LENGTH_SHORT
-        ).show()
-    }
-
-    private fun refreshEngineLabel() {
-        binding.btnEngine.setText(
-            if (preferVerovio()) R.string.engine_verovio else R.string.engine_webview
-        )
     }
 
     // ---------------------------------------------------------------------
@@ -165,7 +315,8 @@ class HomeActivity : AppCompatActivity() {
     }
 
     // ---------------------------------------------------------------------
-    // 3-level pick flow: SAF -> ACTION_GET_CONTENT -> built-in scanner
+    // 2-level pick flow: SAF -> ACTION_GET_CONTENT. The built-in storage
+    // scanner has moved to SettingsActivity ("Scan device for scores").
     // ---------------------------------------------------------------------
 
     private val mimeCandidates = arrayOf(
@@ -194,16 +345,17 @@ class HomeActivity : AppCompatActivity() {
         } catch (e: Exception) {
             Log.w(TAG, "ACTION_GET_CONTENT failed: ${e.message}")
         }
+        // Neither SAF nor GET_CONTENT — fall back to built-in device scan.
         ensureStoragePermissionThen { showBuiltinFileBrowser() }
     }
 
     private fun ensureStoragePermissionThen(block: () -> Unit) {
         if (Build.VERSION.SDK_INT in Build.VERSION_CODES.M..32) {
             val granted = ContextCompat.checkSelfPermission(
-                this, Manifest.permission.READ_EXTERNAL_STORAGE
+                this, android.Manifest.permission.READ_EXTERNAL_STORAGE
             ) == PackageManager.PERMISSION_GRANTED
             if (granted) block() else storagePermissionLauncher.launch(
-                Manifest.permission.READ_EXTERNAL_STORAGE
+                android.Manifest.permission.READ_EXTERNAL_STORAGE
             )
         } else {
             block()
@@ -220,9 +372,11 @@ class HomeActivity : AppCompatActivity() {
             }
             val labels = files.map { it.absolutePath }.toTypedArray()
             AlertDialog.Builder(this@HomeActivity)
-                .setTitle(R.string.action_scan)
+                .setTitle(R.string.settings_scan_storage)
                 .setItems(labels) { _, which ->
-                    onPicked(Uri.fromFile(files[which]), persistable = false)
+                    val f = files[which]
+                    val uri = Uri.fromFile(f)
+                    onPicked(uri, persistable = false)
                 }
                 .setNegativeButton(android.R.string.cancel, null)
                 .show()
